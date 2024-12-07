@@ -10,6 +10,8 @@ sudo HSA_OVERRIDE_GFX_VERSION=10.3.0 ./llama-server \
         -m ${LLM_DIR}/${CODESTRAL}  \
         --ctx-size 8000 \
         -v \
-        --gpu-layers 200 \
-        -ts 65,35
+        --gpu-layers 60 \
+        -ts 65,35 \
+        --split-mode row
 
+# NOTE - in order to use split-mode-row, which provides close to a 2x speed boost, you may need to apply the bios adjustments from this repo
