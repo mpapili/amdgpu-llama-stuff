@@ -8,7 +8,7 @@ sudo dnf install -y \
   radeontop \
   git
 
-sudo dnf install -y rocm-comgr hipblas hipfft hiprand hipsolver hipsparse rocalution rocblas rocfft rocm-smi rocrand rocsolver rocsparse rocm-device-libs  rocminfo cmake
+sudo dnf install -y rocm-comgr rocblas-devel hipblas hipblas-devel hipfft hiprand hipsolver hipsparse rocalution rocblas rocfft rocm-smi rocrand rocsolver rocsparse rocm-device-libs  rocminfo cmake 
 
-sudo dnf install rocm-hip --enable-repo=updates-testing -y
+sudo dnf install rocm-hip rocm-hip-devel --enable-repo=updates-testing -y
 
