@@ -5,7 +5,7 @@ sudo dnf install -y vulkan-loader vulkan-validation-layers vulkan-tools \
                    vulkan-headers vulkan-devel glslang
 
 # install vulkan SDK using instructions from
-https://vulkan.lunarg.com/sdk/home#linux
+# https://vulkan.lunarg.com/sdk/home#linux
 
 # then when building
 cmake .. -DLLAMA_CUBLAS=OFF -DLLAMA_VULKAN=ON
