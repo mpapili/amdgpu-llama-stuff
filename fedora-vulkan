@@ -1,0 +1,10 @@
+#! /bin/bash
+
+# in addition to existing fedora prereqs
+sudo dnf install -y vulkan-loader vulkan-validation-layers vulkan-tools \
+                   vulkan-headers vulkan-devel glslang
+
+# then when building
+cmake .. -DLLAMA_CUBLAS=OFF -DLLAMA_VULKAN=ON
+make -j$(nproc)
+
