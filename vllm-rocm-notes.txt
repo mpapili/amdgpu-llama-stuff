@@ -1,0 +1,63 @@
+## Install
+
+## Tokenizer stuff:
+
+I needed to download the tokenizer specifically from HF - from the base repo, not the GGUF quant repo:
+- I have a directory ./qwen_25_tokenizer that I made which contains:
+```
+config.json  generation_config.json  merges.txt  tokenizer_config.json  tokenizer.json  vocab.json
+```
+
+so that I can run:
+
+```
+python -m vllm.entrypoints.openai.api_server \
+       --model /home/mike/Downloads/LLMs/Qwen2.5-32B-Instruct-Q5_K_M.gguf \
+       --quantization gguf \
+       --tokenizer ./qwen_25_tokenizer \
+       --trust-remote-code \
+       --tensor-parallel-size 2 \
+       --dtype auto \
+       --max-model-len 8096 \
+       --gpu-memory-utilization 0.90
+```
+
+and now for a very quick test request:
+```
+import requests
+import time
+
+VLLM_SERVER = "http://localhost:8000/v1/chat/completions"
+
+def query_vllm(prompt, model="model"):
+    headers = {"Content-Type": "application/json"}
+    data = {
+        #"model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False
+    }
+
+    start_time = time.time()
+    response = requests.post(VLLM_SERVER, json=data, headers=headers)
+    end_time = time.time()
+
+    result = response.json()
+
+    output = result['choices'][0]['message']['content']
+    prompt_tokens = result['usage']['prompt_tokens']
+    completion_tokens = result['usage']['completion_tokens']
+    total_time = end_time - start_time
+
+    tokens_per_second = completion_tokens / total_time
+
+    print(f"Output: {output}\n")
+    print(f"Prompt Tokens: {prompt_tokens}")
+    print(f"Completion Tokens: {completion_tokens}")
+    print(f"Time taken: {total_time:.3f}s")
+    print(f"Tokens/second: {tokens_per_second:.2f}")
+
+if __name__ == "__main__":
+    prompt = "Tell me about the history of AI."
+    query_vllm(prompt)
+
+```
