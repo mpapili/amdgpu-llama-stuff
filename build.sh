@@ -1,11 +1,16 @@
-#! /bin/bash
+export CC=/usr/bin/hipcc
+export CXX=/usr/bin/hipcc
 
-git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp/
-mkdir build
-cd build
-
-HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
-  cmake -S .. -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1030 \
+cmake .. -G "Unix Makefiles" \
+  -DGGML_HIP=ON \
+  -DGGML_HIPBLAS=ON \
+  -DAMDGPU_TARGETS=gfx1030 \
   -DCMAKE_BUILD_TYPE=Release \
-  && cmake --build build --config Release -- -j 30
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DGGML_OPENMP=ON \
+  -DGGML_LTO=OFF \
+  -DLLAMA_CURL=OFF
+
+# Build only the main CLI
+make -j"$(nproc)" llama-cli
+
