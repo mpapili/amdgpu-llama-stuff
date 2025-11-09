@@ -1,0 +1,46 @@
+FROM fedora:42
+
+# Install all necessary packages in one dnf command
+RUN echo "Updating system packages..." && \
+    dnf update -y && \
+    echo "Installing essential ROCm utilities and tools, libraries, development tools, and build essentials..." && \
+    dnf install -y \
+      rocminfo \
+      rocm-clinfo \
+      rocm-opencl \
+      radeontop \
+      git \
+      rocm-comgr \
+      rocblas-devel \
+      hipblas \
+      hipblas-devel \
+      hipfft \
+      hiprand \
+      hipsolver \
+      hipsparse \
+      rocalution \
+      rocblas \
+      rocfft \
+      rocm-smi \
+      rocrand \
+      rocsolver \
+      rocsparse \
+      rocm-device-libs \
+      cmake \
+      make \
+      gcc \
+      gcc-c++ && \
+    echo "Installation completed successfully!"
+
+# Clone and build llama.cpp
+RUN dnf install -y hip-devel rocminfo rocm-clinfo
+RUN git clone https://github.com/ggerganov/llama.cpp.git
+WORKDIR llama.cpp
+RUN mkdir /llama.cpp/build
+WORKDIR /llama.cpp/build
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+      cmake -S .. -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1030 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLAMA_CURL=OFF && \
+    cmake --build build --config Release -- -j 30
+
