@@ -1,6 +1,6 @@
 #! /bin/bash
 
-git clone https://github.com/ggerganov/llama.cpp.git
+git clone https://github.com/ggml-org/llama.cpp.git
 
 cd llama.cpp/
 mkdir build

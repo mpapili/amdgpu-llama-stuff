@@ -10,5 +10,5 @@ docker run --rm \
     --user $(id -u):$(id -g) \
     --security-opt no-new-privileges \
     -p 0.0.0.0:8080:8080 \
-    -it fedora-llama-cpp-nemotron:latest \
+    -it fedora-llama-cpp-vulkan-mike-patch:latest \
     /bin/bash

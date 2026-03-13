@@ -20,6 +20,8 @@ RUN dnf update -y && \
 # Clone and build llama.cpp
 RUN git clone https://github.com/ggml-org/llama.cpp.git 
 WORKDIR llama.cpp
+COPY ./mike-patcher.py mike-patcher.py
+RUN python3 mike-patcher.py
 RUN mkdir /llama.cpp/build
 WORKDIR /llama.cpp/build
 RUN cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF

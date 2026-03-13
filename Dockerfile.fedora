@@ -34,7 +34,7 @@ RUN echo "Updating system packages..." && \
 
 # Clone and build llama.cpp
 RUN dnf install -y hip-devel rocminfo rocm-clinfo
-RUN git clone https://github.com/ggerganov/llama.cpp.git
+RUN git clone https://github.com/ggml-org/llama.cpp.git 
 WORKDIR llama.cpp
 RUN mkdir /llama.cpp/build
 WORKDIR /llama.cpp/build

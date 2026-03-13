@@ -1,0 +1,19 @@
+FROM rocm/pytorch:rocm6.3.4_ubuntu24.04_py3.12_pytorch_release_2.4.0
+
+RUN apt-get update && apt-get install -y \
+    git \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade setuptools in the conda env to understand PEP 639 license strings
+RUN pip install --no-cache-dir --upgrade pip setuptools ninja wheel setuptools-scm packaging
+
+RUN git clone https://github.com/vllm-project/vllm.git /vllm
+WORKDIR /vllm
+
+ENV VLLM_TARGET_DEVICE="rocm" \
+    PYTORCH_ROCM_ARCH="gfx1030"
+
+RUN pip install --no-cache-dir --no-build-isolation .
+
+RUN chmod -R 777 /vllm
