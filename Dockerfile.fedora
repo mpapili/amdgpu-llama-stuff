@@ -29,7 +29,10 @@ RUN echo "Updating system packages..." && \
       cmake \
       make \
       gcc \
-      gcc-c++ && \
+      gcc-c++ \
+      python3 \
+      python3-flask \
+      curl && \
     echo "Installation completed successfully!"
 
 # Clone and build llama.cpp
@@ -44,3 +47,17 @@ RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
         -DLLAMA_CURL=OFF && \
     cmake --build build --config Release -- -j 30
 
+# Copy llama-server binary to llama.cpp root so qwen scripts can find it
+RUN cp /llama.cpp/build/build/bin/llama-server /llama.cpp/
+
+# Create utils directory and copy utilities
+RUN mkdir -p /llama.cpp/mike-utils
+COPY llama-server-api.py /llama.cpp/mike-utils/
+COPY llama-server-control-api.sh /llama.cpp/mike-utils/
+RUN chmod +x /llama.cpp/mike-utils/llama-server-api.py /llama.cpp/mike-utils/llama-server-control-api.sh
+
+# Copy qwen runner scripts
+COPY runners/ /llama.cpp/
+RUN chmod +x /llama.cpp/qwen*.sh
+
+WORKDIR /llama.cpp

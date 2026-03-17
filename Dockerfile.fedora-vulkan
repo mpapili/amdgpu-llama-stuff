@@ -14,7 +14,10 @@ RUN dnf update -y && \
       vulkan-headers \
       vulkan-devel \
       glslang \
-      glslc && \
+      glslc \
+      python3 \
+      python3-flask \
+      curl && \
     dnf clean all
 
 # Clone and build llama.cpp
@@ -24,4 +27,18 @@ RUN mkdir /llama.cpp/build
 WORKDIR /llama.cpp/build
 RUN cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
 RUN make -j$(nproc)
-WORKDIR /llama.cpp/build/bin
+
+# Copy llama-server binary to llama.cpp root so qwen scripts can find it
+RUN cp /llama.cpp/build/bin/llama-server /llama.cpp/
+
+WORKDIR /llama.cpp
+
+# Create utils directory and copy utilities
+RUN mkdir -p /llama.cpp/mike-utils
+COPY llama-server-api.py /llama.cpp/mike-utils/
+COPY llama-server-control-api.sh /llama.cpp/mike-utils/
+RUN chmod +x /llama.cpp/mike-utils/llama-server-api.py /llama.cpp/mike-utils/llama-server-control-api.sh
+
+# Copy qwen runner scripts
+COPY runners/ /llama.cpp/
+RUN chmod +x /llama.cpp/qwen*.sh
