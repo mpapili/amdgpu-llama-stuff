@@ -111,10 +111,10 @@ def stop_server() -> bool:
         logger.info("Stopping server process group (PID: %d, PGID: %d)", server_process.pid, pgid)
         os.killpg(pgid, signal.SIGTERM)
 
-        # Wait for graceful shutdown
+        # Wait for bash wrapper to exit
         try:
             server_process.wait(timeout=5)
-            logger.info("Server stopped gracefully")
+            logger.info("Bash wrapper stopped gracefully")
         except subprocess.TimeoutExpired:
             logger.warning(
                 "Server did not stop gracefully, killing process group (PGID: %d)", pgid
@@ -122,6 +122,23 @@ def stop_server() -> bool:
             os.killpg(pgid, signal.SIGKILL)
             server_process.wait()
             logger.info("Server killed")
+
+        # Wait for the entire process group (including llama-server child) to die.
+        # llama-server can take several seconds to unload GPU memory after bash exits.
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                os.killpg(pgid, 0)  # signal 0 = existence check
+                time.sleep(0.5)
+            except (ProcessLookupError, OSError):
+                logger.info("Process group %d fully exited", pgid)
+                break
+        else:
+            logger.warning("Process group %d still alive after 30s, sending SIGKILL", pgid)
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
 
         return True
 
