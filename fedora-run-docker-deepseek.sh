@@ -1,18 +1,21 @@
-#!/bin/bash
+#! /bin/bash
 
 docker run --rm \
-    --name llama-vulkan \
+    --name llama-rocm \
     --device=/dev/kfd \
     --device=/dev/dri/renderD128 \
     --device=/dev/dri/renderD129 \
     --cap-drop=ALL \
-    --group-add video \
-    --group-add render \
-    --group-add $(getent group video | cut -d: -f3) \
-    --group-add $(getent group render | cut -d: -f3) \
+    --cap-add=SYS_PTRACE \
+    --cap-add=IPC_LOCK \
     -v /home/mike/Downloads/LLMs:/models:Z \
+    -w /llama.cpp/ \
     --user $(id -u):$(id -g) \
     --security-opt no-new-privileges \
+    --security-opt seccomp=unconfined \
+    -e HIP_VISIBLE_DEVICES=0,1 \
+    -e ROCR_VISIBLE_DEVICES=0,1 \
     -p 0.0.0.0:8080:8080 \
-    -it fedora-llama-cpp-vulkan:latest \
+    -p 0.0.0.0:9090:9090 \
+    -it fedora-llama-cpp-deepseek:latest \
     /bin/bash

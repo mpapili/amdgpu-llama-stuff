@@ -1,6 +1,9 @@
 FROM fedora:42
 
-# Install all necessary packages in one dnf command
+# ──────────────────────────────────────────────
+# 1. Base build dependencies + confirmed runtime GPU libs
+#    Package names verified against packages.fedoraproject.org/fedora-42
+# ──────────────────────────────────────────────
 RUN dnf update -y && \
     dnf install -y \
       git \
@@ -8,37 +11,76 @@ RUN dnf update -y && \
       make \
       gcc \
       gcc-c++ \
-      vulkan-loader \
-      vulkan-validation-layers \
-      vulkan-tools \
-      vulkan-headers \
-      vulkan-devel \
-      glslang \
-      glslc \
       python3 \
       python3-flask \
-      curl && \
+      wget \
+      # Runtime: Vulkan ICD loader
+      vulkan-loader \
+      # Runtime: Mesa RADV Vulkan driver (provides libvulkan_radeon.so)
+      # and radeon_icd.x86_64.json — without this loader finds zero ICDs
+      mesa-vulkan-drivers \
+      # Runtime: DRI/gallium base drivers (required by mesa-vulkan-drivers)
+      mesa-dri-drivers \
+      # Runtime: libglvnd stack — correct Fedora 42 package names
+      libglvnd \
+      libglvnd-egl \
+      mesa-libGL \
+      mesa-libEGL \
+      # Runtime: DRM userspace lib
+      libdrm && \
     dnf clean all
 
-# Clone and build llama.cpp
-RUN git clone https://github.com/ggml-org/llama.cpp.git 
-WORKDIR llama.cpp
-RUN mkdir /llama.cpp/build
-WORKDIR /llama.cpp/build
-RUN cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
-RUN make -j$(nproc)
+# ──────────────────────────────────────────────
+# 2. LunarG Vulkan SDK (build-time toolchain only)
+# ──────────────────────────────────────────────
+ARG VULKAN_SDK_VERSION=1.4.341.1
 
-# Copy llama-server binary to llama.cpp root so qwen scripts can find it
+RUN wget -q \
+      https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.xz \
+      -O /tmp/vulkansdk.tar.xz && \
+    mkdir -p /opt/vulkan-sdk && \
+    tar -xf /tmp/vulkansdk.tar.xz -C /opt/vulkan-sdk && \
+    rm /tmp/vulkansdk.tar.xz
+
+ENV VULKAN_SDK=/opt/vulkan-sdk/${VULKAN_SDK_VERSION}/x86_64
+ENV PATH="${VULKAN_SDK}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${VULKAN_SDK}/lib"
+ENV VK_ADD_LAYER_PATH="${VULKAN_SDK}/share/vulkan/explicit_layer.d"
+ENV PKG_CONFIG_PATH="${VULKAN_SDK}/lib/pkgconfig"
+
+# ──────────────────────────────────────────────
+# 3. Clone and build llama.cpp with Vulkan backend
+# ──────────────────────────────────────────────
+RUN git clone https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /llama.cpp
+RUN mkdir build
+
+WORKDIR /llama.cpp/build
+RUN cmake .. \
+      -DGGML_VULKAN=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF \
+      -DVulkan_INCLUDE_DIR=${VULKAN_SDK}/include \
+      -DVulkan_LIBRARY=${VULKAN_SDK}/lib/libvulkan.so && \
+    make -j$(nproc)
+
+# ──────────────────────────────────────────────
+# 4. Stage binaries
+# ──────────────────────────────────────────────
 RUN cp /llama.cpp/build/bin/llama-server /llama.cpp/
 
 WORKDIR /llama.cpp
 
-# Create utils directory and copy utilities
+# ──────────────────────────────────────────────
+# 5. Copy your utilities and runner scripts
+# ──────────────────────────────────────────────
 RUN mkdir -p /llama.cpp/mike-utils
-COPY llama-server-api.py /llama.cpp/mike-utils/
-COPY llama-server-control-api.sh /llama.cpp/mike-utils/
-RUN chmod +x /llama.cpp/mike-utils/llama-server-api.py /llama.cpp/mike-utils/llama-server-control-api.sh
+COPY llama-server-api.py          /llama.cpp/mike-utils/
+COPY llama-server-control-api.sh  /llama.cpp/mike-utils/
+RUN chmod +x \
+      /llama.cpp/mike-utils/llama-server-api.py \
+      /llama.cpp/mike-utils/llama-server-control-api.sh
 
-# Copy qwen runner scripts
 COPY runners/ /llama.cpp/
 RUN chmod +x /llama.cpp/qwen*.sh
