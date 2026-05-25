@@ -19,5 +19,4 @@ HSA_ENABLE_SDMA=0 ./llama-server \
   --top-k 20 \
   --min-p 0.0 \
   --presence-penalty 1.0 \
-  --jinja \
-  --mmproj /models/qwen3.5-27b-mmproj-F16.gguf 
+  --jinja
