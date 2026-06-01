@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# rebuild-vulkan-image-ubuntu-nemotron.sh - Clean rebuild of Vulkan+Nemotron Docker image
-# Rebuilds with tag ubuntu-llama-cpp-vulkan-nemotron:latest
-# Run from project root: ./devops/rebuild-vulkan-image-ubuntu-nemotron.sh
+# rebuild-rocm-image.sh - Clean rebuild of ROCm Docker image
+# Rebuilds with tag ubuntu-llama-cpp-deepseek-v4-flash:latest
+# Run from project root: ./devops/rebuild-rocm-image.sh
 
 # Get the project root (parent of devops directory)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-IMAGE_TAG="ubuntu-llama-cpp-vulkan-nemotron:latest"
-DOCKERFILE="Dockerfile.ubuntu-vulkan-nemotron-omni"
+IMAGE_TAG="ubuntu-llama-cpp-deepseek-v4-flash:latest"
+DOCKERFILE="Dockerfile.ubuntu-rocm-deepseek-v4-flash"
 
 echo "========================================"
-echo "Vulkan+Nemotron Image Rebuild"
+echo "ROCm Image Rebuild"
 echo "========================================"
 echo "Project root: $PROJECT_ROOT"
 echo "Image tag: $IMAGE_TAG"

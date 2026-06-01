@@ -1,0 +1,140 @@
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ──────────────────────────────────────────────
+# 1. Bootstrap: tools needed to set up the AMD ROCm apt repo
+# ──────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      wget \
+      gnupg \
+      lsb-release \
+      software-properties-common && \
+    rm -rf /var/lib/apt/lists/*
+
+# ──────────────────────────────────────────────
+# 2. Add AMD's official ROCm 7.2.3 repository
+#
+#    Ubuntu 26.04's archive only ships ROCm 7.1 and only in 'universe'.
+#    AMD's repo.radeon.com ships ROCm 7.2.3 built against 'noble' (24.04),
+#    which is ABI-compatible with 26.04 and is the install path AMD
+#    officially documents.
+# ──────────────────────────────────────────────
+ARG ROCM_VERSION=7.2.3
+ARG ROCM_UBUNTU_CODENAME=noble
+
+RUN mkdir -p --mode=0755 /etc/apt/keyrings && \
+    wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | \
+      gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} ${ROCM_UBUNTU_CODENAME} main" \
+      > /etc/apt/sources.list.d/rocm.list && \
+    echo "Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600" \
+      > /etc/apt/preferences.d/rocm-pin-600
+
+# ──────────────────────────────────────────────
+# 3a. Install build deps + ROCm runtime/dev stack in one transaction
+#
+#     NOTE on libxml2: Ubuntu 26.04 ships only libxml2.so.16
+#     (package: libxml2-16). ROCm 7.2.x's bundled ld.lld is
+#     hard-linked to libxml2.so.2, which no longer exists in the
+#     archive. We install the modern libxml2-16 here for any
+#     general-purpose use, and then in a separate step below we
+#     fetch libxml2.so.2 from the Ubuntu 24.04 (noble) archive
+#     and drop it into /lib/x86_64-linux-gnu so ROCm's lld can
+#     find it. This workaround is tracked in ROCm issue #6194.
+# ──────────────────────────────────────────────
+RUN echo "Updating system packages..." && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      git \
+      make \
+      gcc \
+      g++ \
+      python3 \
+      python3-flask \
+      python3-pip \
+      pkg-config \
+      libxml2-16 \
+      zlib1g \
+      libzstd1 \
+      libtinfo6 \
+      libnuma1 \
+      libelf1t64 \
+      rocm \
+      rocm-hip-sdk \
+      rocm-hip-runtime \
+      rocm-hip-runtime-dev \
+      rocm-device-libs \
+      rocm-smi-lib \
+      rocminfo \
+      clinfo \
+      hipblas hipblas-dev \
+      rocm-opencl-runtime && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    echo "ROCm installation completed successfully!"
+
+# ──────────────────────────────────────────────
+# 3b. Workaround for ROCm issue #6194:
+#     ROCm 7.2.x's bundled ld.lld needs libxml2.so.2 but Ubuntu
+#     26.04 only ships libxml2.so.16. Fetch the noble (24.04)
+#     libxml2 .deb, extract just the .so file, and install it
+#     to /lib/x86_64-linux-gnu without registering it with dpkg
+#     (so it can't conflict with libxml2-16).
+# ──────────────────────────────────────────────
+RUN set -eux; \
+    cd /tmp; \
+    wget -q https://launchpad.net/ubuntu/+archive/primary/+files/libxml2_2.12.7+dfsg+really2.9.14-0.4ubuntu0.4_amd64.deb; \
+    dpkg --fsys-tarfile libxml2_2.12.7+dfsg+really2.9.14-0.4ubuntu0.4_amd64.deb \
+      | tar -xO ./usr/lib/x86_64-linux-gnu/libxml2.so.2.9.14 \
+      > /lib/x86_64-linux-gnu/libxml2.so.2.9.14; \
+    chmod 0644 /lib/x86_64-linux-gnu/libxml2.so.2.9.14; \
+    ln -sf libxml2.so.2.9.14 /lib/x86_64-linux-gnu/libxml2.so.2; \
+    ldconfig; \
+    rm -f /tmp/libxml2_2.12.7+dfsg+really2.9.14-0.4ubuntu0.4_amd64.deb; \
+    # Sanity-check: ld.lld must now resolve libxml2.so.2
+    ldd /opt/rocm/lib/llvm/bin/ld.lld | grep libxml2
+
+# radeontop is only in Ubuntu's universe; install it separately so its
+# absence doesn't block the (much more important) ROCm install above.
+RUN add-apt-repository -y universe && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends radeontop || true && \
+    rm -rf /var/lib/apt/lists/*
+
+# ──────────────────────────────────────────────
+# 4. ROCm PATH/env
+# ──────────────────────────────────────────────
+ENV ROCM_PATH="/opt/rocm"
+ENV PATH="/opt/rocm/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64"
+
+# ──────────────────────────────────────────────
+# 5. Clone and build ds4 with ROCm backend
+#    ds4 uses a plain Makefile; ROCM_ARCH must match your GPU.
+#    gfx1030 = RX 6000 series; override at build time with:
+#      --build-arg AMDGPU_TARGETS=gfx1100
+# ──────────────────────────────────────────────
+ARG AMDGPU_TARGETS=gfx1030
+
+RUN git clone --branch rocm https://github.com/antirez/ds4.git /ds4
+WORKDIR /ds4
+RUN make rocm ROCM_ARCH=${AMDGPU_TARGETS} -j$(nproc)
+
+# ──────────────────────────────────────────────
+# 5b. Patch for REAP-pruned models (e.g. 0xSero/DeepSeek-V4-Flash-180B-GGUF)
+#     REAP pruning reduces Flash's expert count from 256 → 160.
+#     ds4's rocm branch hardcodes 256; patch it and rebuild only ds4.
+# ──────────────────────────────────────────────
+RUN sed -i 's/DS4_N_EXPERT           = 256,/DS4_N_EXPERT           = 160,/' /ds4/ds4.c && \
+    make rocm ROCM_ARCH=${AMDGPU_TARGETS} -j$(nproc)
+
+# ──────────────────────────────────────────────
+# 6. Ensure 'render' and 'video' groups exist (so --group-add by name works)
+# ──────────────────────────────────────────────
+RUN groupadd -r -f render && groupadd -r -f video
+
+WORKDIR /ds4

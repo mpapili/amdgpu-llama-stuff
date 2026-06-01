@@ -1,0 +1,95 @@
+FROM ubuntu:26.04
+
+# Prevent interactive prompts during apt installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ──────────────────────────────────────────────
+# 1. Base build dependencies + confirmed runtime GPU libs
+#    Package names verified against Ubuntu 26.04 (resolute)
+# ──────────────────────────────────────────────
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      git \
+      cmake \
+      make \
+      gcc \
+      g++ \
+      python3 \
+      python3-flask \
+      wget \
+      xz-utils \
+      pkg-config \
+      # Runtime: Vulkan ICD loader
+      libvulkan1 \
+      # Runtime: Mesa Vulkan drivers (provides libvulkan_radeon.so / libvulkan_intel.so
+      # and radeon_icd.x86_64.json — without this the loader finds zero ICDs).
+      # On Ubuntu 26.04 (Mesa 26.x) some older split driver packages are merged
+      # into mesa-vulkan-drivers itself.
+      mesa-vulkan-drivers \
+      # Runtime: DRI/gallium base drivers (required by mesa-vulkan-drivers)
+      libgl1-mesa-dri \
+      # Runtime: libglvnd stack (Ubuntu uses libglvnd-style split packages)
+      libglvnd0 \
+      libegl1 \
+      libgl1 \
+      libgles2 \
+      # Runtime: DRM userspace lib
+      libdrm2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# ──────────────────────────────────────────────
+# 2. LunarG Vulkan SDK (build-time toolchain only)
+# ──────────────────────────────────────────────
+ARG VULKAN_SDK_VERSION=1.4.341.1
+
+RUN wget -q \
+      https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.xz \
+      -O /tmp/vulkansdk.tar.xz && \
+    mkdir -p /opt/vulkan-sdk && \
+    tar -xf /tmp/vulkansdk.tar.xz -C /opt/vulkan-sdk && \
+    rm /tmp/vulkansdk.tar.xz
+
+ENV VULKAN_SDK=/opt/vulkan-sdk/${VULKAN_SDK_VERSION}/x86_64
+ENV PATH="${VULKAN_SDK}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${VULKAN_SDK}/lib"
+ENV VK_ADD_LAYER_PATH="${VULKAN_SDK}/share/vulkan/explicit_layer.d"
+ENV PKG_CONFIG_PATH="${VULKAN_SDK}/lib/pkgconfig"
+
+# ──────────────────────────────────────────────
+# 3. Clone and build llama.cpp with Vulkan backend
+# ──────────────────────────────────────────────
+RUN git clone https://github.com/antirez/llama.cpp-deepseek-v4-flash.git /llama.cpp
+
+WORKDIR /llama.cpp
+RUN mkdir build
+
+WORKDIR /llama.cpp/build
+RUN cmake .. \
+      -DGGML_VULKAN=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF \
+      -DVulkan_INCLUDE_DIR=${VULKAN_SDK}/include \
+      -DVulkan_LIBRARY=${VULKAN_SDK}/lib/libvulkan.so && \
+    make -j$(nproc)
+
+# ──────────────────────────────────────────────
+# 4. Stage binaries
+# ──────────────────────────────────────────────
+RUN cp /llama.cpp/build/bin/llama-server /llama.cpp/
+
+WORKDIR /llama.cpp
+
+# ──────────────────────────────────────────────
+# 5. Copy your utilities and runner scripts
+# ──────────────────────────────────────────────
+RUN mkdir -p /llama.cpp/mike-utils
+COPY llama-server-api.py          /llama.cpp/mike-utils/
+COPY llama-server-control-api.sh  /llama.cpp/mike-utils/
+RUN chmod +x \
+      /llama.cpp/mike-utils/llama-server-api.py \
+      /llama.cpp/mike-utils/llama-server-control-api.sh
+
+COPY runners/ /llama.cpp/
+RUN chmod +x /llama.cpp/qwen*.sh

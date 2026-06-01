@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # rebuild-vulkan-image.sh - Clean rebuild of Vulkan Docker image
-# Deletes the old image, clears builder cache, and rebuilds with tag ubuntu-llama-cpp-vulkan:latest
+# Rebuilds with tag ubuntu-llama-cpp-vulkan:latest
 # Run from project root: ./devops/rebuild-vulkan-image.sh
 
 # Get the project root (parent of devops directory)
@@ -27,7 +27,7 @@ if [[ ! -f "$DOCKERFILE" ]]; then
 fi
 
 # Copy qwen runner scripts from llama.cpp directory
-echo "Step 1/4: Syncing qwen runner scripts..."
+echo "Step 1/2: Syncing qwen runner scripts..."
 LLAMA_CPP_DIR="$PROJECT_ROOT/../../git/llama.cpp"
 if [[ -d "$LLAMA_CPP_DIR" ]]; then
     mkdir -p "$PROJECT_ROOT/runners"
@@ -37,32 +37,16 @@ else
     echo "⚠ llama.cpp directory not found at $LLAMA_CPP_DIR, skipping sync"
 fi
 
-# Delete existing image
-echo ""
-echo "Step 2/4: Removing old image '$IMAGE_TAG'..."
-if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-    docker image rm "$IMAGE_TAG" --force
-    echo "✓ Old image removed"
-else
-    echo "✓ No existing image found (skipping)"
-fi
-
-# Clear builder cache
-echo ""
-echo "Step 3/4: Clearing Docker builder cache..."
-docker builder prune --all --force
-echo "✓ Builder cache cleared"
-
 # Rebuild image
 echo ""
-echo "Step 4/4: Building new image..."
-docker build \
+echo "Step 2/2: Building new image..."
+podman build \
     --file "$DOCKERFILE" \
     --tag "$IMAGE_TAG" \
     --progress=plain \
     "$PROJECT_ROOT"
 
-if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+if podman image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
     echo ""
     echo "========================================"
     echo "✓ Build successful!"

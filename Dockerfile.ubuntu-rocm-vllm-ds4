@@ -1,0 +1,73 @@
+# =============================================================================
+# vLLM Dockerfile for DeepSeek-V4-Flash-180B (K160 REAP pruned)
+# vLLM branch: jasl/vllm codex/ds4-sm120-min-enable (vllm-project/vllm PR #41834)
+# REAP K160 router patch from 0xSero/deepseek-spark patch_vllm_reap_gb10.py
+# Hardware: Radeon Pro W6800 (gfx1030) + 96 GB DDR4 + heavy CPU offload
+#
+# Base: rocm/pytorch — pre-built torch for ROCm with all headers present.
+# The jasl branch requires torch/headeronly/core/Dispatch.h which isn't
+# shipped in any pre-built pip wheel; AMD's image has it.
+# =============================================================================
+
+FROM docker.io/rocm/pytorch:latest
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    PYTHONUNBUFFERED=1
+
+# =============================================================================
+# 1. Install build tools and venv support
+# =============================================================================
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      git \
+      cmake \
+      ninja-build \
+      python3-venv \
+      wget && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# 2. Python venv — reuse the python that ships with the base image
+# =============================================================================
+RUN python3 -m venv /opt/venv --system-site-packages && \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel ninja \
+      setuptools_rust setuptools_scm
+
+ENV PATH=/opt/venv/bin:${PATH}
+
+# =============================================================================
+# 3. Clone jasl/vllm — PR #41834 DeepSeek-V4 community branch
+# =============================================================================
+WORKDIR /workspace
+RUN git clone --depth 1 \
+      --branch codex/ds4-sm120-min-enable \
+      https://github.com/jasl/vllm.git vllm
+
+# =============================================================================
+# 4. Apply REAP K160 router patch
+# =============================================================================
+WORKDIR /workspace/vllm
+COPY patch_reap_k160.py /tmp/patch_reap_k160.py
+RUN python3 /tmp/patch_reap_k160.py && echo "REAP K160 patch applied"
+
+# =============================================================================
+# 5. Build vLLM for ROCm
+# =============================================================================
+ENV PYTORCH_ROCM_ARCH=gfx1030 \
+    MAX_JOBS=4
+
+RUN pip install -e .[rocm] --no-build-isolation && \
+    rm -rf /workspace/vllm/.deps /workspace/vllm/build /root/.cache/pip
+
+# =============================================================================
+# 6. Runtime environment
+# =============================================================================
+ENV VLLM_USE_MODELSCOPE=False \
+    VLLM_ROCM_USE_AITER=1 \
+    HIP_VISIBLE_DEVICES=0,1
+
+WORKDIR /workspace
