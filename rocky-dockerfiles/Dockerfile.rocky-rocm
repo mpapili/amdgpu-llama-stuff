@@ -1,0 +1,120 @@
+FROM rockylinux:10.1
+
+# ──────────────────────────────────────────────
+# 1. Bootstrap: tools needed to set up the AMD ROCm dnf repo
+# ──────────────────────────────────────────────
+RUN dnf install -y \
+      ca-certificates \
+      curl \
+      wget \
+      gnupg2 \
+      findutils \
+      which && \
+    dnf clean all
+
+# ──────────────────────────────────────────────
+# 2. Enable required Rocky/EPEL repos and add AMD's ROCm 7.2.3 repo
+#
+#    ROCm's RHEL/CentOS repo (built against rhel9) is ABI-compatible
+#    with Rocky Linux 10.x and is the install path AMD officially
+#    documents for RHEL-family distros.
+# ──────────────────────────────────────────────
+ARG ROCM_VERSION=7.2.3
+ARG ROCM_RHEL_MAJOR=9
+
+RUN dnf install -y epel-release && \
+    dnf config-manager --enable crb && \
+    dnf clean all
+
+RUN echo "[ROCm-${ROCM_VERSION}]" > /etc/yum.repos.d/rocm.repo && \
+    echo "name=ROCm${ROCM_VERSION}" >> /etc/yum.repos.d/rocm.repo && \
+    echo "baseurl=https://repo.radeon.com/rocm/rhel${ROCM_RHEL_MAJOR}/${ROCM_VERSION}/main" >> /etc/yum.repos.d/rocm.repo && \
+    echo "enabled=1" >> /etc/yum.repos.d/rocm.repo && \
+    echo "priority=50" >> /etc/yum.repos.d/rocm.repo && \
+    echo "gpgcheck=1" >> /etc/yum.repos.d/rocm.repo && \
+    echo "gpgkey=https://repo.radeon.com/rocm/rocm.gpg.key" >> /etc/yum.repos.d/rocm.repo
+
+# ──────────────────────────────────────────────
+# 3. Install build deps + ROCm runtime/dev stack in one transaction
+#
+#    NOTE: Unlike the Ubuntu version, there is no libxml2.so.2 shim
+#    needed here — RHEL-family distros ship libxml2.so.2 natively
+#    (the .so version number tracks the SONAME, not the package
+#    version), so ROCm's bundled ld.lld resolves it out of the box.
+# ──────────────────────────────────────────────
+RUN dnf install -y \
+      git \
+      cmake \
+      make \
+      gcc \
+      gcc-c++ \
+      python3 \
+      python3-flask \
+      python3-pip \
+      pkg-config \
+      libxml2 \
+      zlib \
+      libzstd \
+      ncurses-libs \
+      numactl-libs \
+      elfutils-libelf \
+      rocm \
+      rocm-hip-sdk \
+      rocm-hip-runtime \
+      rocm-hip-runtime-devel \
+      rocm-device-libs \
+      rocm-cmake \
+      rocm-smi-lib \
+      rocminfo \
+      clinfo \
+      hipblas hipblas-devel \
+      hipfft  hipfft-devel \
+      hiprand hiprand-devel \
+      hipsolver hipsolver-devel \
+      hipsparse hipsparse-devel \
+      rocblas rocblas-devel \
+      rocfft  rocfft-devel \
+      rocrand rocrand-devel \
+      rocsolver rocsolver-devel \
+      rocsparse rocsparse-devel \
+      rocalution rocalution-devel \
+      rocm-opencl-runtime && \
+    dnf clean all && \
+    echo "ROCm installation completed successfully!"
+
+# radeontop — available in EPEL; install best-effort so its absence
+# doesn't block the (much more important) ROCm install above.
+RUN dnf install -y radeontop || true && \
+    dnf clean all
+
+# ──────────────────────────────────────────────
+# 4. ROCm PATH/env
+# ──────────────────────────────────────────────
+ENV ROCM_PATH="/opt/rocm"
+ENV PATH="/opt/rocm/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64"
+
+# ──────────────────────────────────────────────
+# 5. Clone and build llama.cpp with HIP backend
+# ──────────────────────────────────────────────
+RUN git clone https://github.com/ggml-org/llama.cpp.git
+WORKDIR /llama.cpp
+RUN mkdir /llama.cpp/build
+WORKDIR /llama.cpp/build
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+      cmake -S .. -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1030 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLAMA_CURL=OFF && \
+    cmake --build build --config Release -- -j 30
+
+# ──────────────────────────────────────────────
+# 6. Stage llama-server next to runner scripts
+# ──────────────────────────────────────────────
+RUN cp /llama.cpp/build/build/bin/llama-server /llama.cpp/
+
+# ──────────────────────────────────────────────
+# 7. Ensure 'render' and 'video' groups exist (so --group-add by name works)
+# ──────────────────────────────────────────────
+RUN groupadd -r -f render && groupadd -r -f video
+
+WORKDIR /llama.cpp
