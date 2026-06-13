@@ -1,0 +1,41 @@
+# Minimal Ubuntu 26.04 + Python3 + pip + Aider (via uv, isolated Python 3.12)
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# --- System Python3 + pip + minimal essentials ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        git \
+        curl \
+        ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Install uv (standalone binary, no python deps) ---
+ENV UV_INSTALL_DIR=/usr/local/bin
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# --- Install aider with uv's own managed Python 3.12 ---
+# (aider requires py3.9-3.12; Ubuntu 26.04's python3.14 can't build its pinned deps)
+ENV UV_TOOL_DIR=/opt/uv/tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_INSTALL_DIR=/opt/uv/python
+RUN uv tool install --force --python python3.12 aider-chat@latest
+
+# --- 'run-aider' command wired to llama.cpp on the host ---
+RUN printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '# Launch aider against a local llama.cpp server on the Docker host' \
+    'export OPENAI_API_BASE="http://host.docker.internal:8080/v1"' \
+    'export OPENAI_API_KEY="${OPENAI_API_KEY:-sk-local}"   # llama.cpp ignores the key, but aider requires one' \
+    'exec aider --model "openai/${AIDER_MODEL:-local-model}" "$@"' \
+    > /usr/local/bin/run-aider \
+    && chmod +x /usr/local/bin/run-aider
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

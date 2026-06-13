@@ -1,0 +1,60 @@
+FROM fedora:44
+
+# ──────────────────────────────────────────────
+# 1. Base build dependencies + ROCm HIP stack
+#    Fedora ships ROCm natively — installs to /usr, not /opt/rocm
+# ──────────────────────────────────────────────
+RUN dnf update -y && \
+    dnf install -y \
+      git \
+      cmake \
+      make \
+      gcc \
+      gcc-c++ \
+      python3 \
+      python3-flask \
+      wget \
+      rocm-hip-devel \
+      rocblas-devel \
+      hipblas-devel \
+      rocminfo \
+      rocm-smi && \
+    dnf clean all
+
+ENV ROCM_PATH=/usr
+ENV HIP_PLATFORM=amd
+
+# ──────────────────────────────────────────────
+# 2. Fetch llama.cpp at the pinned commit (shallow — only that commit)
+# ──────────────────────────────────────────────
+ARG LLAMA_CPP_COMMIT=308f61c31f083251ce8150f10b9ef97679b500b5
+
+RUN mkdir /llama.cpp && \
+    cd /llama.cpp && \
+    git init && \
+    git remote add origin https://github.com/ggml-org/llama.cpp.git && \
+    git fetch --depth 1 origin ${LLAMA_CPP_COMMIT} && \
+    git checkout FETCH_HEAD
+
+# ──────────────────────────────────────────────
+# 3. Build with HIP/ROCm backend
+#    RX 6800 + W6800 → both gfx1030
+#    GGML_HIP_NO_VMM=ON → avoid HIP VMM VA-reservation issues
+# ──────────────────────────────────────────────
+WORKDIR /llama.cpp
+
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    cmake -B build \
+      -DGGML_HIP=ON \
+      -DGPU_TARGETS=gfx1030 \
+      -DGGML_HIP_NO_VMM=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# ──────────────────────────────────────────────
+# 4. Stage binaries
+# ──────────────────────────────────────────────
+RUN cp /llama.cpp/build/bin/llama-server /llama.cpp/
+
+WORKDIR /llama.cpp

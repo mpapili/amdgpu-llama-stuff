@@ -1,8 +1,8 @@
-FROM fedora:42
+FROM fedora:44
 
 # ──────────────────────────────────────────────
 # 1. Base build dependencies + confirmed runtime GPU libs
-#    Package names verified against packages.fedoraproject.org/fedora-42
+#    Package names verified against packages.fedoraproject.org/fedora-44
 # ──────────────────────────────────────────────
 RUN dnf update -y && \
     dnf install -y \
@@ -21,7 +21,7 @@ RUN dnf update -y && \
       mesa-vulkan-drivers \
       # Runtime: DRI/gallium base drivers (required by mesa-vulkan-drivers)
       mesa-dri-drivers \
-      # Runtime: libglvnd stack — correct Fedora 42 package names
+      # Runtime: libglvnd stack — correct Fedora 44 package names
       libglvnd \
       libglvnd-egl \
       mesa-libGL \
