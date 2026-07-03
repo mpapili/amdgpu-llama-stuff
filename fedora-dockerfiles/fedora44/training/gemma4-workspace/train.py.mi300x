@@ -1,0 +1,75 @@
+import os
+import torch
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import LoraConfig
+from trl import SFTTrainer, SFTConfig
+
+MODEL_PATH = os.environ.get("MODEL_PATH", "/home/mike/models/gemma-4-12b/")
+
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+)
+
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+GEMMA_CHAT_TEMPLATE = (
+    "{{ bos_token }}{% for message in messages %}"
+    "{{ '<start_of_turn>' + (message['role'] if message['role'] != 'assistant' else 'model') + '\n' }}"
+    "{{ message['content'] | trim }}{{ '<end_of_turn>\n' }}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}{{ '<start_of_turn>model\n' }}{% endif %}"
+)
+tokenizer.chat_template = GEMMA_CHAT_TEMPLATE
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_PATH,
+    dtype=torch.bfloat16,
+    device_map={"": 0},
+    attn_implementation="eager",   # <-- add this
+    local_files_only=True,
+)
+
+peft_config = LoraConfig(
+    r=32,
+    lora_alpha=128, # ratio to r is critical
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=[
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ],
+)
+
+dataset = load_dataset("json", data_files="/home/mike/amdgpu-llama-stuff/fedora-dockerfiles/fedora44/training/gemma4-workspace/train.jsonl", split="train")
+
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=dataset,
+    peft_config=peft_config,
+    processing_class=tokenizer,
+    args=SFTConfig(
+        output_dir="/workspace/checkpoints",
+        num_train_epochs=10,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
+        gradient_checkpointing=True,
+        learning_rate=3e-4,
+        warmup_ratio=0.03,
+        lr_scheduler_type="cosine",
+        bf16=True,
+        logging_steps=1,
+        save_strategy="epoch",
+        max_length=4096, # match our dataset!
+        report_to="none",
+    ),
+)
+
+trainer.train()
+trainer.save_model("/workspace/adapter-final")
+print("Done! Adapter saved to /workspace/adapter-final")
