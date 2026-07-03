@@ -1,0 +1,32 @@
+# Minimal Ubuntu 26.04 + Node.js 20+ + qwen-code (qwen-code-cli) via npm
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# --- System essentials ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        curl \
+        ca-certificates \
+        gnupg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Install Node.js 20.x (qwen-code requires Node >= 20) ---
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Install qwen-code CLI globally ---
+RUN npm install -g @qwen-code/qwen-code@latest \
+    && qwen --version
+
+# --- 'run-qwen' command: defaults to local llama.cpp, or .env OpenRouter if present ---
+COPY run-qwen /usr/local/bin/run-qwen
+RUN chmod +x /usr/local/bin/run-qwen
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

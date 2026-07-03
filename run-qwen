@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="$(pwd)/.env"
+
+# --- Defaults pointing at a local llama.cpp server on the Docker host ---
+LLAMA_BASE_URL="http://host.docker.internal:8080/v1"
+LLAMA_MODEL="${AIDER_MODEL:-local-model}"
+LLAMA_MODEL="${QWEN_MODEL:-$LLAMA_MODEL}"
+
+read_env_val() {
+    local key="$1"
+    grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$ENV_FILE" 2>/dev/null \
+        | tail -n1 \
+        | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}=//" \
+        | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+        | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/'
+}
+
+USE_OPENROUTER=0
+if [[ -f "$ENV_FILE" ]]; then
+    ENV_BASE_URL="$(read_env_val OPENAI_BASE_URL || true)"
+    ENV_API_KEY="$(read_env_val OPENAI_API_KEY || true)"
+    ENV_MODEL="$(read_env_val OPENAI_MODEL || true)"
+    if [[ "$ENV_BASE_URL" == *"openrouter.ai"* && -n "$ENV_API_KEY" ]]; then
+        USE_OPENROUTER=1
+    fi
+fi
+
+if [[ "$USE_OPENROUTER" -eq 1 ]]; then
+    export OPENAI_BASE_URL="$ENV_BASE_URL"
+    export OPENAI_API_KEY="$ENV_API_KEY"
+    export OPENAI_MODEL="${ENV_MODEL:-qwen/qwen3-coder}"
+    echo "=============================================================="
+    echo " qwen-code-cli startup"
+    echo "   Provider : OpenRouter  (found in ./.env)"
+    echo "   Base URL : $OPENAI_BASE_URL"
+    echo "   Model    : $OPENAI_MODEL"
+    echo "   API key  : (loaded from .env)"
+    echo "=============================================================="
+else
+    export OPENAI_BASE_URL="$LLAMA_BASE_URL"
+    export OPENAI_API_KEY="${OPENAI_API_KEY:-sk-local}"
+    export OPENAI_MODEL="$LLAMA_MODEL"
+    echo "=============================================================="
+    echo " qwen-code-cli startup"
+    echo "   Provider : local llama.cpp server (DEFAULT)"
+    echo "   Base URL : $OPENAI_BASE_URL"
+    echo "   Model    : $OPENAI_MODEL"
+    if [[ -f "$ENV_FILE" ]]; then
+        echo "   Note     : ./.env present but no OpenRouter settings detected."
+    else
+        echo "   Note     : no ./.env found; using llama.cpp defaults."
+    fi
+    echo "=============================================================="
+fi
+
+exec qwen "$@"

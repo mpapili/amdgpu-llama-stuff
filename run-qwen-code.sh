@@ -1,0 +1,2 @@
+podman run -it --rm --add-host=host.docker.internal:host-gateway \
+  -v "$(pwd)":/workspace:Z localhost/qwen-code run-qwen
