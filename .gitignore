@@ -1,4 +1,10 @@
 fedora-dockerfiles/fedora44/training/adapter-final/
 fedora-dockerfiles/fedora44/training/checkpoints/
-fedora-dockerfiles/fedora44/training/llama-cpp
 fedora-dockerfiles/fedora44/training/.cache
+fedora-dockerfiles/fedora44/training/llama.cpp/
+
+# all model files
+*.gguf
+*.safetensors
+
+
