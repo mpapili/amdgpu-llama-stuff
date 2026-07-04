@@ -1,0 +1,100 @@
+Create a minimal`index.html` containing a Three.js scene featuring a cat.
+Generate a brief, single-file Three.js demo in `index.html` showing a dog.
+Write a concise `index.html` with a Three.js scene displaying a chair.
+Produce a standalone `index.html` using Three.js to render a tree.
+Create a short `index.html` file with a Three.js scene containing a car.
+Build a simple `index.html` Three.js scene with a bird.
+Make a compact `index.html` Three.js visualization of a house.
+Draft a single `index.html` page using Three.js for a flower.
+Construct a brief `index.html` Three.js scene depicting a ball.
+Assemble a minimal `index.html` with Three.js showing a book.
+Create a tiny `index.html` Three.js scene featuring a cup.
+Generate a short `index.html` file with Three.js rendering a lamp.
+Write a brief `index.html` Three.js demo displaying a table.
+Produce a compact `index.html` containing a Three.js scene with a bicycle.
+Create a standalone `index.html` Three.js scene showing a cloud.
+Build a minimal `index.html` Three.js visualization of a fish.
+Make a concise `index.html` Three.js scene featuring a guitar.
+Draft a single-file `index.html` Three.js demo with a hat.
+Construct a brief `index.html` Three.js scene depicting a key.
+Assemble a simple `index.html` Three.js scene showing a leaf.
+Create a short `index.html` Three.js scene featuring a moon.
+Generate a minimal `index.html` Three.js demo displaying a mountain.
+Write a compact `index.html` Three.js scene containing a pencil.
+Produce a standalone `index.html` Three.js visualization of a phone.
+Create a brief `index.html` Three.js scene with a pizza.
+Build a tiny `index.html` Three.js scene featuring a robot.
+Make a concise `index.html` Three.js demo showing a rocket.
+Draft a single `index.html` Three.js scene depicting a shoe.
+Construct a minimal `index.html` Three.js scene with a star.
+Assemble a short `index.html` Three.js visualization of a sun.
+Create a standalone `index.html` Three.js scene featuring a sword.
+Generate a brief `index.html` Three.js demo displaying a tent.
+Write a compact `index.html` Three.js scene containing a train.
+Produce a minimal `index.html` Three.js visualization of a treehouse.
+Create a tiny `index.html` Three.js scene showing a truck.
+Build a concise `index.html` Three.js scene featuring an umbrella.
+Make a single-file `index.html` Three.js demo depicting a violin.
+Draft a brief `index.html` Three.js scene with a whale.
+Construct a short `index.html` Three.js visualization of a wheel.
+Assemble a minimal `index.html` Three.js scene showing a window.
+Create a standalone `index.html` Three.js scene featuring a wolf.
+Generate a compact `index.html` Three.js demo displaying a zebra.
+Write a brief `index.html` Three.js scene containing an apple.
+Produce a tiny `index.html` Three.js visualization of a banana.
+Create a concise `index.html` Three.js scene showing a bear.
+Build a minimal `index.html` Three.js scene featuring a bee.
+Make a short `index.html` Three.js demo depicting a bell.
+Draft a single-file `index.html` Three.js scene with a boat.
+Construct a brief `index.html` Three.js visualization of a bridge.
+Assemble a compact `index.html` Three.js scene showing a butterfly.
+Create a standalone `index.html` Three.js scene featuring a cake.
+Generate a minimal `index.html` Three.js demo displaying a camera.
+Write a concise `index.html` Three.js scene containing a candle.
+Produce a short `index.html` Three.js visualization of a castle.
+Create a tiny `index.html` Three.js scene showing a clock.
+Build a brief `index.html` Three.js scene featuring a coffee.
+Make a compact `index.html` Three.js demo depicting a computer.
+Draft a single `index.html` Three.js scene with a crown.
+Construct a minimal `index.html` Three.js visualization of a desk.
+Assemble a short `index.html` Three.js scene showing a diamond.
+Create a standalone `index.html` Three.js scene featuring a dolphin.
+Generate a brief `index.html` Three.js demo displaying a door.
+Write a compact `index.html` Three.js scene containing a dragon.
+Produce a tiny `index.html` Three.js visualization of a drum.
+Create a concise `index.html` Three.js scene showing an eagle.
+Build a minimal `index.html` Three.js scene featuring an elephant.
+Make a short `index.html` Three.js demo depicting an engine.
+Draft a single-file `index.html` Three.js scene with an eye.
+Construct a brief `index.html` Three.js visualization of a flag.
+Assemble a compact `index.html` Three.js scene showing a fox.
+Create a standalone `index.html` Three.js scene featuring a frog.
+Generate a minimal `index.html` Three.js demo displaying a ghost.
+Write a concise `index.html` Three.js scene containing a giraffe.
+Produce a short `index.html` Three.js visualization of a globe.
+Create a tiny `index.html` Three.js scene showing a hammer.
+Build a brief `index.html` Three.js scene featuring a heart.
+Make a compact `index.html` Three.js demo depicting a helicopter.
+Draft a single `index.html` Three.js scene with a horse.
+Construct a minimal `index.html` Three.js visualization of an igloo.
+Assemble a short `index.html` Three.js scene showing an island.
+Create a standalone `index.html` Three.js scene featuring a jellyfish.
+Generate a brief `index.html` Three.js demo displaying a kangaroo.
+Write a compact `index.html` Three.js scene containing a kite.
+Produce a tiny `index.html` Three.js visualization of a koala.
+Create a concise `index.html` Three.js scene showing a ladder.
+Build a minimal `index.html` Three.js scene featuring a lantern.
+Make a short `index.html` Three.js demo depicting a lion.
+Draft a single-file `index.html` Three.js scene with a lobster.
+Construct a brief `index.html` Three.js visualization of a map.
+Assemble a compact `index.html` Three.js scene showing a monkey.
+Create a minimal `index.html` containing a Three.js scene featuring a nest.
+Generate a brief, single-file Three.js demo in `index.html` showing an owl.
+Write a concise `index.html` with a Three.js scene displaying a parrot.
+Produce a standalone `index.html` using Three.js to render a queen.
+Create a short `index.html` file with a Three.js scene containing a rabbit.
+Build a simple `index.html` Three.js scene with a snake.
+Make a compact `index.html` Three.js visualization of a tiger.
+Draft a single `index.html` page using Three.js for a turtle.
+Construct a brief `index.html` Three.js scene depicting a unicorn.
+Assemble a minimal `index.html` with Three.js showing a vase.
