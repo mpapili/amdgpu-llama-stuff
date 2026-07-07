@@ -8,9 +8,10 @@
 #
 # Env vars (all optional):
 #   LLAMA_BASE_URL  llama.cpp OpenAI-compatible endpoint reachable from
-#                   inside the container. Default: http://192.168.1.1:8080
-#                   (use the LAN IP — 127.0.0.1 inside the container is the
-#                   container itself; pass --network=host below to use it).
+#                   inside the container. Default: http://127.0.0.1:8080
+#                   (works because the runner defaults to --network=host;
+#                   without host networking, 127.0.0.1 is the container
+#                   itself — point at the host's LAN IP instead).
 #   LLAMA_MODEL     model id (default: local-model)
 #   LLAMA_API_KEY   bearer token if the endpoint needs one
 #   PORT            host port to forward (default: 8000)
@@ -44,7 +45,7 @@ fi
 exec podman run --rm -it \
   "${NET_ARGS[@]}" \
   -v "${HERE}:/work:Z" \
-  -e LLAMA_BASE_URL="${LLAMA_BASE_URL:-http://192.168.1.1:8080}" \
+  -e LLAMA_BASE_URL="${LLAMA_BASE_URL:-http://127.0.0.1:8080}" \
   -e LLAMA_MODEL="${LLAMA_MODEL:-local-model}" \
   -e LLAMA_API_KEY="${LLAMA_API_KEY:-${OPENAI_API_KEY:-}}" \
   -e LLAMA_TIMEOUT="${LLAMA_TIMEOUT:-600}" \

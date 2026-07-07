@@ -39,8 +39,8 @@ EXPOSE 8000
 # Defaults; overridden by run-vision-viewer.sh / env vars. The llama.cpp
 # endpoint must be reachable from inside the container — run with the default
 # --network=host (set in the runner) so 127.0.0.1:8080 on the host works, or
-# point at the LAN IP.
-ENV LLAMA_BASE_URL=http://192.168.1.1:8080 \
+# point at a LAN IP.
+ENV LLAMA_BASE_URL=http://127.0.0.1:8080 \
     LLAMA_MODEL=local-model
 
 CMD ["python3", "/app/viewer.py", "/work/train.jsonl", "8000"]

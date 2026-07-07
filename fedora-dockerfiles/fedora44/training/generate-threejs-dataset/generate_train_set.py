@@ -23,6 +23,7 @@ import time
 import threading
 import urllib.request
 import urllib.error
+import vision_validate
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -274,6 +275,31 @@ def process_prompt(idx, total, prompt, args):
 
     reply = strip_think_tags(reply)
 
+    # ---- Vision validation feedback loop (same one viewer.py runs) --------
+    # Render the generated HTML, screenshot it, ask the vision LLM whether it
+    # looks acceptable; if broken, take its fixed HTML and re-validate up to
+    # --vision-max-depth rounds. Only swap in the fix when the model explicitly
+    # accepts it. On any failure (no playwright, LLM error, no convergence) we
+    # keep the original reply so generation work isn't lost.
+    if args.vision_validate:
+        html = vision_validate.extract_html(reply)
+        if html:
+            def vlog(msg, _tag=tag):
+                print(f"{_tag} vision: {msg}", file=sys.stderr)
+            final, ok = vision_validate.validate_row(args.vcfg, html, prompt, vlog)
+            if ok and final != html:
+                reply = vision_validate.replace_html_in_content(reply, final)
+                print(f"{tag} vision: swapped in accepted fixed HTML "
+                      f"({len(final)} chars)", file=sys.stderr)
+            elif ok:
+                print(f"{tag} vision: accepted as-is", file=sys.stderr)
+            else:
+                print(f"{tag} vision: did not converge/failed; keeping "
+                      f"original reply", file=sys.stderr)
+        else:
+            print(f"{tag} vision: no ```html block; skipping feedback loop",
+                  file=sys.stderr)
+
     # Saved-reply budget: the assistant content AFTER stripping <think> tags
     # must fit --max-reply-tokens. Generation itself may run longer than this
     # (--max-tokens controls the API cap and can exceed 4096 to leave room for
@@ -340,7 +366,38 @@ def main():
                              "errors, and finish_reason to stderr. Use this "
                              "to diagnose empty replies from the API.")
     parser.add_argument("--rejects", default="rejects.jsonl")
+
+    # ---- Vision validation feedback loop (same one viewer.py runs) --------
+    # After generation, render the HTML in headless Chromium, screenshot it,
+    # and ask the vision LLM whether it's acceptable; if broken, take the fix
+    # and re-validate up to --vision-max-depth rounds. The accepted fix
+    # replaces the html block in the reply, THEN the normal token-budget
+    # validator below runs on it (so a too-big fix is rejected like any other
+    # over-budget reply). Disable with --no-vision-validate.
+    vg = parser.add_argument_group("vision validation")
+    vg.add_argument(
+        "--no-vision-validate", dest="vision_validate", action="store_false",
+        help="Disable the screenshot->LLM->fix feedback loop; just save the "
+             "raw reply as-is.")
+    vg.set_defaults(vision_validate=True)
+    vg.add_argument(
+        "--vision-max-tokens", type=int, default=8192,
+        help="Generation cap for the vision validation LLM call (the fix can "
+             "be a full HTML doc, so this defaults higher than --max-tokens).")
+    vg.add_argument(
+        "--vision-max-depth", type=int, default=5,
+        help="Max recursive fix rounds per row before giving up and keeping "
+             "the original reply.")
+
     args = parser.parse_args()
+
+    # One shared config for the vision loop (built once; reused per prompt).
+    args.vcfg = vision_validate.VisionConfig(
+        base_url=args.base_url, model=args.model, api_key=args.api_key,
+        timeout=args.timeout, max_tokens=args.vision_max_tokens,
+        max_depth=args.vision_max_depth, max_reply_tokens=args.max_reply_tokens,
+        max_context=args.max_context,
+    )
 
     if not os.path.exists(args.prompts):
         sys.exit(f"Prompts file not found: {args.prompts}")

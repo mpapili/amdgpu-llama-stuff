@@ -1,0 +1,40 @@
+# Train-set generator with the vision-validation feedback loop.
+#
+# Built on the official Playwright PYTHON image: Python + the playwright
+# client + Chromium + all OS deps/fonts are already installed and matched, so
+# generate_train_set.py can screenshot rendered Three.js pages (via
+# vision_validate.py) between generation and the token-budget gate.
+#
+# Build (or let run-making-train-set.sh build it on first run):
+#     podman build -t threejs-train-generator -f Dockerfile.generator .
+#
+# prompts.txt / train.jsonl / rejects.jsonl / validated-html/ are bind-mounted
+# at runtime under /work — nothing is baked in except the two scripts.
+
+# The /python variant ships the matching playwright Python client alongside the
+# browser build (the JS-only tag does NOT).
+FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+
+# Run as root so writes to the bind-mounted /work volume land as the host user
+# (podman maps container root -> invoking user). Chromium needs --no-sandbox
+# under root, which vision_validate.screenshot_html already passes.
+USER root
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /work
+
+# Only the scripts are baked in; the dataset files are mounted at runtime.
+COPY generate_train_set.py vision_validate.py /app/
+
+# Default llama.cpp endpoint; override with LLAMA_BASE_URL / --base-url. Use
+# 127.0.0.1 with the runner's default --network=host so a host llama-server is
+# reachable; point at a LAN IP otherwise.
+ENV LLAMA_BASE_URL=http://127.0.0.1:8080 \
+    LLAMA_MODEL=local-model
+
+# No EXPOSE — this is a batch script, not a server.
+CMD ["python3", "/app/generate_train_set.py", "--prompts", "/work/prompts.txt", \
+     "--out", "/work/train.jsonl", "--rejects", "/work/rejects.jsonl", \
+     "--base-url", "http://127.0.0.1:8080", "--resume"]

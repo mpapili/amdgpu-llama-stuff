@@ -13,18 +13,19 @@ Usage:
 Then open http://localhost:8000
 """
 
-import base64
 import json
 import os
 import sqlite3
 import sys
 import threading
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from vision_validate import (
+    VisionConfig, extract_html, format_error, replace_html_in_content,
+    validate_row, check_row_budget,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_TRAIN = os.path.join(HERE, "train.jsonl")
@@ -123,10 +124,25 @@ def get_stats(conn, total):
 # boots on a host without it; the validation button just reports the error.
 # Run via run-vision-viewer.sh to get a container with Chromium installed.
 
-VALIDATED_HTML_DIR = os.path.join(HERE, "validated-html")
+def validated_html_dir():
+    """Where standalone validated HTML files are written. Defaults to a
+    `validated-html/` dir next to train.jsonl — so in the container it lands
+    on the mounted /work volume, not the ephemeral /app image layer."""
+    env = os.environ.get("VALIDATED_HTML_DIR")
+    if env:
+        return env
+    return os.path.join(
+        os.path.dirname(os.path.abspath(Handler.train_path)), "validated-html")
 
+
+# Guards train.jsonl rewrites (atomic temp-file + os.replace) so concurrent
+# validation jobs can't trample each other or the file the viewer reads.
+_file_write_lock = threading.Lock()
+
+# Default to 127.0.0.1 so it works out-of-the-box when run with
+# --network=host (the runner's default) against a llama-server on the host.
 LLAMA_BASE_URL = os.environ.get(
-    "LLAMA_BASE_URL", "http://192.168.1.1:8080"
+    "LLAMA_BASE_URL", "http://127.0.0.1:8080"
 ).rstrip("/")
 LLAMA_MODEL = os.environ.get("LLAMA_MODEL", "local-model")
 LLAMA_API_KEY = os.environ.get(
@@ -135,169 +151,69 @@ LLAMA_API_KEY = os.environ.get(
 LLAMA_TIMEOUT = float(os.environ.get("LLAMA_TIMEOUT", "600"))
 LLAMA_MAX_TOKENS = int(os.environ.get("LLAMA_MAX_TOKENS", "8192"))
 VALIDATE_MAX_DEPTH = int(os.environ.get("VALIDATE_MAX_DEPTH", "5"))
+# Token budgets a fixed row must fit before it's written back to train.jsonl —
+# same limits generate_train_set.py enforces on generation (start-making-train-set.sh
+# uses 4096/4096). Counted via the llama.cpp /tokenize endpoint, char/3 fallback.
+MAX_REPLY_TOKENS = int(os.environ.get("MAX_REPLY_TOKENS", "4096"))
+MAX_CONTEXT = int(os.environ.get("MAX_CONTEXT", "4096"))
+
+# One config object bundling the env-driven knobs; passed to every
+# vision_validate.* call so the viewer and the generator run the same
+# loop with the same limits.
+VIEWER_CFG = VisionConfig(
+    base_url=LLAMA_BASE_URL, model=LLAMA_MODEL, api_key=LLAMA_API_KEY,
+    timeout=LLAMA_TIMEOUT, max_tokens=LLAMA_MAX_TOKENS,
+    max_depth=VALIDATE_MAX_DEPTH, max_reply_tokens=MAX_REPLY_TOKENS,
+    max_context=MAX_CONTEXT,
+)
 
 _jobs = {}          # job_id -> state dict
 _jobs_lock = threading.Lock()
 
 
-def derive_subject(prompt):
-    """Pull a short noun phrase out of the original prompt to fill the
-    'acceptable _____' blank — e.g. 'Three.js scene featuring a cat'."""
-    p = (prompt or "").strip()
-    low = p.lower()
-    for kw in ("featuring", "displaying", "showing", "depicting", "rendering"):
-        if kw in low:
-            i = low.index(kw) + len(kw)
-            rest = p[i:].strip().rstrip(".").strip()
-            if rest:
-                tail = rest[0].lower() + rest[1:]
-                return f"Three.js scene {kw} {tail}"
-    if "three.js" in low:
-        return "Three.js scene"
-    return p or "the requested page"
-
-
-def screenshot_html(html, timeout_ms=20000):
-    """Render `html` in headless Chromium via Playwright; return PNG bytes.
-
-    Waits for network idle (CDN-loaded Three.js) and for a <canvas> to exist
-    before painting a frame. SwiftShader flags give us WebGL under headless
-    software rendering; --no-sandbox lets Chromium run as root in a container.
-    """
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=True,
-            args=[
-                "--use-gl=angle",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 800}, device_scale_factor=1
-        )
-        page = context.new_page()
-        try:
-            page.set_content(html, wait_until="networkidle", timeout=timeout_ms)
-            # Give the render loop at least one painted frame.
-            try:
-                page.wait_for_function(
-                    "() => { const c = document.querySelector('canvas'); "
-                    "return c && c.width > 0 && c.height > 0; }",
-                    timeout=timeout_ms,
-                )
-            except Exception:
-                pass  # not all pages use a canvas; screenshot anyway
-            page.wait_for_timeout(800)
-            return page.screenshot(full_page=False)
-        finally:
-            context.close()
-            browser.close()
-
-
-def ask_vision_llm(prompt, subject, png_bytes):
-    """POST the screenshot + the accept/fix instruction to the llama.cpp
-    chat-completions endpoint in OpenAI vision format. Returns the model's
-    text reply (which may contain a ```html fix block)."""
-    data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
-    instruction = (
-        "You are reviewing a rendered screenshot of a single-file HTML page "
-        "that was generated to satisfy this request:\n\n"
-        f'"{prompt}"\n\n'
-        f"Does this look like an acceptable {subject}, or is it broken "
-        "(blank page, crashed, missing the requested object, JS errors, "
-        "wrong scene)?\n"
-        "- If it is ACCEPTABLE, reply with exactly the word: ACCEPTABLE\n"
-        "- If it is BROKEN, reply with the complete FIXED single-file HTML "
-        "for the same request, wrapped in a ```html fenced block. Include "
-        "the full <!DOCTYPE html> document.\n"
-    )
-    payload = {
-        "model": LLAMA_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": instruction},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ],
-        "max_tokens": LLAMA_MAX_TOKENS,
-        "temperature": 0.2,
-        "stream": False,
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    if LLAMA_API_KEY:
-        headers["Authorization"] = "Bearer " + LLAMA_API_KEY
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        LLAMA_BASE_URL + "/v1/chat/completions",
-        data=data, headers=headers, method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=LLAMA_TIMEOUT) as resp:
-        obj = json.loads(resp.read().decode("utf-8"))
-    choices = obj.get("choices") or []
-    if not choices:
-        raise RuntimeError("LLM returned no choices: " + json.dumps(obj)[:300])
-    return (choices[0].get("message", {}) or {}).get("content", "") or ""
-
-
-def validate_row(idx, html, prompt, log):
-    """Screenshot -> LLM -> fix -> re-validate, recursively, until the model
-    accepts or VALIDATE_MAX_DEPTH is hit. `log(msg)` reports progress to the
-    job. Returns (final_html, ok) where ok means the model explicitly accepted.
-    """
-    subject = derive_subject(prompt)
-    log(f"Subject for judgement: {subject}")
-    current = html
-    for depth in range(1, VALIDATE_MAX_DEPTH + 1):
-        log(f"[round {depth}] rendering + screenshotting HTML "
-            f"({len(current)} chars)…")
-        try:
-            png = screenshot_html(current)
-        except Exception as e:
-            log(f"[round {depth}] screenshot FAILED: {e}")
-            return current, False
-        log(f"[round {depth}] screenshot OK ({len(png)} bytes); asking LLM…")
-        try:
-            reply = ask_vision_llm(prompt, subject, png)
-        except Exception as e:
-            log(f"[round {depth}] LLM call FAILED: {e}")
-            return current, False
-
-        fixed = extract_html(reply)
-        if fixed:
-            log(f"[round {depth}] LLM says BROKEN, returned fixed HTML "
-                f"({len(fixed)} chars); re-validating…")
-            current = fixed
-            continue
-        if "acceptable" in reply.lower():
-            log(f"[round {depth}] LLM says ACCEPTABLE.")
-            return current, True
-        log(f"[round {depth}] LLM gave no fix and didn't accept: "
-            f"{reply.strip()[:160]}")
-        return current, False
-
-    log(f"Hit max depth ({VALIDATE_MAX_DEPTH}) without an explicit accept; "
-        f"saving last HTML as unconverged.")
-    return current, False
-
-
-def save_validated_html(idx, html, ok):
-    os.makedirs(VALIDATED_HTML_DIR, exist_ok=True)
-    name = f"row_{idx:05d}{'' if ok else '.unconverged'}.html"
-    path = os.path.join(VALIDATED_HTML_DIR, name)
+def save_validated_html(idx, html, suffix=""):
+    """Write `html` (alone) to validated-html/row_XXXXX<suffix>.html. suffix
+    is '' for accepted, '.unconverged', or '.overbudget'."""
+    d = validated_html_dir()
+    os.makedirs(d, exist_ok=True)
+    name = f"row_{idx:05d}{suffix}.html"
+    path = os.path.join(d, name)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
     return path
+
+
+def update_train_jsonl_row(idx, new_html):
+    """Rewrite row `idx` of train.jsonl so its assistant message's first
+    ```html block is replaced with new_html. Atomic (temp file + os.replace),
+    guarded by _file_write_lock. Also updates the in-memory sample so the UI
+    reflects the change without a reload. Returns the new line string, or
+    None if the row has no assistant message."""
+    train_path = Handler.train_path
+    with _file_write_lock:
+        with open(train_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if not (0 <= idx < len(lines)):
+            raise IndexError(
+                f"row {idx} out of range (file has {len(lines)} lines)")
+        obj = json.loads(lines[idx])
+        msgs = obj.get("messages", [])
+        asst = next((m for m in msgs if m.get("role") == "assistant"), None)
+        if asst is None:
+            return None
+        asst["content"] = replace_html_in_content(asst.get("content", ""), new_html)
+        new_line = json.dumps(obj, ensure_ascii=False)
+        suffix = "\n" if lines[idx].endswith("\n") else ""
+        lines[idx] = new_line + suffix
+        tmp = train_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("".join(lines))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, train_path)
+        if 0 <= idx < len(Handler.samples):
+            Handler.samples[idx] = new_line
+    return new_line
 
 
 def start_validation_job(idx):
@@ -306,7 +222,8 @@ def start_validation_job(idx):
     job_id = uuid.uuid4().hex[:12]
     state = {
         "status": "running", "logs": [], "idx": idx,
-        "htmlPath": None, "ok": False, "error": None,
+        "htmlPath": None, "ok": False, "updated": False,
+        "budget": None, "error": None,
     }
     with _jobs_lock:
         _jobs[job_id] = state
@@ -324,18 +241,65 @@ def start_validation_job(idx):
             html = extract_html(asst)
             if not html:
                 raise ValueError("no ```html block found in this row to validate")
-            final, ok = validate_row(idx, html, prompt, log)
-            path = save_validated_html(idx, final, ok)
+            final, ok = validate_row(VIEWER_CFG, html, prompt, log)
+
+            changed = final != html
+            if ok and changed:
+                # Build the would-be-saved assistant content and run it
+                # through the SAME token-budget gate generate_train_set.py
+                # enforces before touching train.jsonl.
+                new_content = replace_html_in_content(asst, final)
+                budget = check_row_budget(VIEWER_CFG, prompt, new_content)
+                with _jobs_lock:
+                    state["budget"] = budget
+                if not budget["ok"]:
+                    path = save_validated_html(idx, final, ".overbudget")
+                    log(f"Fixed HTML is over budget "
+                        f"({budget['reason']}: reply={budget['reply_tokens']}, "
+                        f"total={budget['total_tokens']} vs limits "
+                        f"reply={budget['limit_reply']}, "
+                        f"context={budget['limit_context']}, "
+                        f"{budget['method']}). train.jsonl left untouched.")
+                    log(f"Saved over-budget HTML -> {path}")
+                    with _jobs_lock:
+                        state["htmlPath"] = path
+                        state["status"] = "done"
+                    return
+                try:
+                    update_train_jsonl_row(idx, final)
+                    with _jobs_lock:
+                        state["updated"] = True
+                    log(f"Updated train.jsonl row {idx} with the accepted "
+                        f"fixed HTML (reply {budget['reply_tokens']} tok, "
+                        f"total {budget['total_tokens']} tok, "
+                        f"{budget['method']}).")
+                    path = save_validated_html(idx, final)
+                    with _jobs_lock:
+                        state["htmlPath"] = path
+                    log(f"Saved standalone HTML -> {path}")
+                except Exception as e:
+                    log("train.jsonl update FAILED:\n" + format_error(e))
+                    path = save_validated_html(idx, final, ".unconverged")
+                    with _jobs_lock:
+                        state["htmlPath"] = path
+                    log(f"Saved HTML (jsonl update failed) -> {path}")
+            elif ok:
+                log("Accepted with no changes — train.jsonl left untouched.")
+            else:
+                path = save_validated_html(idx, final, ".unconverged")
+                with _jobs_lock:
+                    state["htmlPath"] = path
+                log("Did not converge — train.jsonl left untouched; "
+                    "standalone .unconverged.html saved for reference.")
             with _jobs_lock:
-                state["htmlPath"] = path
                 state["ok"] = ok
                 state["status"] = "done"
-            log(f"Saved HTML -> {path}")
         except Exception as e:
+            tb = format_error(e)
             with _jobs_lock:
                 state["status"] = "error"
-                state["error"] = str(e)
-            log(f"ERROR: {e}")
+                state["error"] = tb
+            log(f"FATAL ERROR:\n{tb}")
 
     threading.Thread(target=run, daemon=True).start()
     return job_id
@@ -792,10 +756,21 @@ async function pollValidate(jobId){
       _seenLines = s.logs.length;
     }
     if (s.status === 'done'){
-      vlogStatus.textContent = s.ok ? 'accepted ✓' : 'unconverged';
+      vlogStatus.textContent = s.updated ? 'updated ✓' : (s.ok ? 'accepted ✓' : 'unconverged');
       vlogStatus.className = 'vlog-status ' + (s.ok ? 'done' : 'error');
       if (s.htmlPath){
         appendVlog(['', 'Saved HTML:', s.htmlPath]);
+      }
+      if (s.budget){
+        appendVlog(['Budget: reply=' + s.budget.reply_tokens + ' tok, total=' +
+          (s.budget.total_tokens === null ? '—' : s.budget.total_tokens) +
+          ' tok (limits ' + s.budget.limit_reply + '/' + s.budget.limit_context +
+          ', ' + s.budget.method + ')' + (s.budget.ok ? '' : ' — OVER')]);
+      }
+      if (s.updated){
+        appendVlog(['', 'train.jsonl row ' + (s.idx + 1) + ' updated with the fixed HTML.']);
+        flash('Row ' + (s.idx + 1) + ' updated in train.jsonl');
+        load(s.idx);  // reload the iframe to show the fixed HTML
       }
       stop = true;
     } else if (s.status === 'error'){
@@ -851,7 +826,7 @@ def main():
     print(f"Train path : {Handler.train_path}")
     print(f"DB         : {DB_PATH}")
     print(f"Pruned out : {PRUNED_PATH}")
-    print(f"Validated  : {VALIDATED_HTML_DIR}")
+    print(f"Validated  : {validated_html_dir()}")
     print(f"LLAMA      : {LLAMA_BASE_URL} (model={LLAMA_MODEL})")
     print(f"Serving on : http://localhost:{port}  ({len(Handler.samples)} samples)")
     try:
