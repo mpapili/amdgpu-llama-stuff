@@ -21,7 +21,13 @@ FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
 USER root
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# The /python image ships Python + the Chromium browser binaries + system deps,
+# but NOT the playwright pip package itself — install it, pinned to the image's
+# browser build (v1.49.1) so the client finds the bundled browsers at runtime.
+RUN pip install --no-cache-dir playwright==1.49.1
 
 WORKDIR /work
 
