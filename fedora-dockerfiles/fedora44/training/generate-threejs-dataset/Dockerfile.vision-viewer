@@ -1,0 +1,40 @@
+# Vision-validation viewer for the Three.js train.jsonl dataset.
+#
+# Provisions from scratch: Python + Playwright + a headless Chromium with all
+# its OS deps, so viewer.py can screenshot rendered Three.js pages and feed
+# them to a vision-capable llama.cpp endpoint.
+#
+# Build (or let run-vision-viewer.sh build it on first run):
+#     podman build -t threejs-vision-viewer -f Dockerfile.vision-viewer .
+#
+# The dataset directory (train.jsonl, labels.db, validated-html/) is bind-mounted
+# at runtime — nothing is baked in except the viewer code itself.
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# Playwright + its Chromium browser and all system deps (libnss, libatk,
+# SwiftShader, fonts, ...). `--with-deps` apt-installs everything the bundled
+# Chromium needs to launch headless with WebGL via SwiftShader.
+RUN pip install --no-cache-dir playwright==1.49.1 \
+    && playwright install --with-deps chromium
+
+WORKDIR /work
+
+# Only the viewer is baked in; train.jsonl / labels.db / validated-html/ are
+# mounted at runtime so edits on the host are live in the container.
+COPY viewer.py /app/viewer.py
+
+EXPOSE 8000
+
+# Defaults; overridden by run-vision-viewer.sh / env vars. The llama.cpp
+# endpoint must be reachable from inside the container — use the LAN IP
+# (192.168.1.1:8080) or run with --network=host for 127.0.0.1.
+ENV LLAMA_BASE_URL=http://192.168.1.1:8080 \
+    LLAMA_MODEL=local-model
+
+CMD ["python3", "/app/viewer.py", "/work/train.jsonl", "8000"]
