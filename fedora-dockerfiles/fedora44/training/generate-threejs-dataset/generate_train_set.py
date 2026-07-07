@@ -17,12 +17,25 @@ Standard library only — no pip installs required.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import threading
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+# Matches a complete `...` block (closed) or a dangling open tag to the
+# end of the string (the model ran out of tokens mid-think). DOTALL so a
+# block can span newlines.
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>|<think>.*", re.DOTALL)
+
+
+def strip_think_tags(text):
+    """Remove `...` reasoning blocks (and any dangling open tag) from a
+    model reply before it is written to the dataset."""
+    return _THINK_TAG_RE.sub("", text).strip()
 
 
 # ---- Shared state guarded by a lock (threads write to the same files) ----
@@ -92,8 +105,12 @@ def count_tokens(base_url, api_key, text, timeout):
 
 
 def query_endpoint(base_url, api_key, model, system_prompt, user_prompt,
-                   temperature, max_tokens, timeout):
-    """Streaming chat-completion; assemble text from SSE deltas."""
+                   temperature, max_tokens, timeout, verbose=False):
+    """Streaming chat-completion; assemble text from SSE deltas.
+
+    With verbose=True, dumps every raw SSE line, any reasoning deltas, and
+    the final finish_reason to stderr — useful for diagnosing empty replies
+    (mid-stream errors, reasoning-only output, content filters, etc.)."""
     url = base_url.rstrip("/") + "/v1/chat/completions"
 
     messages = []
@@ -122,10 +139,21 @@ def query_endpoint(base_url, api_key, model, system_prompt, user_prompt,
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
     pieces = []
+    finish_reason = None
+    if verbose:
+        print(f"[verbose] POST {url}\n[verbose] model={model} "
+              f"max_tokens={max_tokens} temperature={temperature}",
+              file=sys.stderr)
+        print(f"[verbose] user_prompt={user_prompt[:120]!r}", file=sys.stderr)
+
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         for raw_line in resp:
             line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line or not line.startswith("data:"):
+            if not line:
+                continue
+            if verbose:
+                print(f"[verbose] << {line}", file=sys.stderr)
+            if not line.startswith("data:"):
                 continue
             chunk = line[len("data:"):].strip()
             if chunk == "[DONE]":
@@ -134,14 +162,39 @@ def query_endpoint(base_url, api_key, model, system_prompt, user_prompt,
                 obj = json.loads(chunk)
             except json.JSONDecodeError:
                 continue
+            # OpenRouter streams mid-stream errors as {"error": {...}} with
+            # no "choices" key. The old code skipped these silently, which is
+            # the usual cause of mysterious "empty replies" — surface the
+            # message instead so the retry log shows the real reason.
+            if "error" in obj and not obj.get("choices"):
+                err = obj["error"]
+                msg = err.get("message") if isinstance(err, dict) else str(err)
+                print(f"[verbose] stream error: {msg}", file=sys.stderr)
+                return ""
             choices = obj.get("choices")
             if not choices:
                 continue
-            content = choices[0].get("delta", {}).get("content")
+            delta = choices[0].get("delta", {})
+            content = delta.get("content")
             if content:
                 pieces.append(content)
+            # Reasoning models (e.g. DeepSeek) stream chain-of-thought under
+            # "reasoning" / "reasoning_content", NOT "content". Show it under
+            # --verbose so reasoning-only replies are obvious.
+            if verbose:
+                reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                if reasoning:
+                    print(f"[verbose] (reasoning) {reasoning[:160]!r}",
+                          file=sys.stderr)
+            fr = choices[0].get("finish_reason")
+            if fr:
+                finish_reason = fr
 
-    return "".join(pieces).strip()
+    assembled = "".join(pieces).strip()
+    if verbose:
+        print(f"[verbose] finish_reason={finish_reason!r} "
+              f"content_len={len(assembled)}", file=sys.stderr)
+    return assembled
 
 
 def append_example(out_path, user_prompt, assistant_reply):
@@ -159,9 +212,10 @@ def append_example(out_path, user_prompt, assistant_reply):
             f.flush()
 
 
-def append_reject(rejects_path, user_prompt, assistant_reply, n_tokens, limit):
+def append_reject(rejects_path, user_prompt, assistant_reply, n_tokens, limit,
+                  reason="over_token_budget"):
     rec = {
-        "reason": "over_token_budget",
+        "reason": reason,
         "tokens": n_tokens,
         "limit": limit,
         "messages": [
@@ -196,6 +250,7 @@ def process_prompt(idx, total, prompt, args):
                 args.base_url, args.api_key, args.model,
                 args.system, prompt,
                 args.temperature, args.max_tokens, args.timeout,
+                verbose=args.verbose,
             )
             if reply:
                 break
@@ -217,20 +272,37 @@ def process_prompt(idx, total, prompt, args):
         bump("failed")
         return f"{tag} FAILED: {prompt[:50]!r}"
 
-    text = token_text_for_record(prompt, reply)
-    n_tokens, used_tokenizer = count_tokens(
-        args.base_url, args.api_key, text, args.timeout
-    )
+    reply = strip_think_tags(reply)
 
-    if n_tokens > args.max_context:
-        append_reject(args.rejects, prompt, reply, n_tokens, args.max_context)
+    # Saved-reply budget: the assistant content AFTER stripping <think> tags
+    # must fit --max-reply-tokens. Generation itself may run longer than this
+    # (--max-tokens controls the API cap and can exceed 4096 to leave room for
+    # reasoning); this cap is what bounds the final, saved content.
+    reply_tokens, used_tokenizer = count_tokens(
+        args.base_url, args.api_key, reply, args.timeout
+    )
+    if reply_tokens > args.max_reply_tokens:
+        append_reject(args.rejects, prompt, reply, reply_tokens,
+                      args.max_reply_tokens, reason="over_reply_budget")
         bump("rejected")
-        return f"{tag} REJECT ({n_tokens} > {args.max_context} tok): {prompt[:50]!r}"
+        return (f"{tag} REJECT reply ({reply_tokens} > "
+                f"{args.max_reply_tokens} tok): {prompt[:50]!r}")
+
+    # Full-record budget: prompt + reply together must fit --max-context
+    # (the training context window).
+    text = token_text_for_record(prompt, reply)
+    n_tokens, _ = count_tokens(args.base_url, args.api_key, text, args.timeout)
+    if n_tokens > args.max_context:
+        append_reject(args.rejects, prompt, reply, n_tokens,
+                      args.max_context, reason="over_context_budget")
+        bump("rejected")
+        return f"{tag} REJECT ctx ({n_tokens} > {args.max_context} tok): {prompt[:50]!r}"
 
     append_example(args.out, prompt, reply)
     bump("succeeded")
     method = "tokenizer" if used_tokenizer else "estimate"
-    return f"{tag} OK ({n_tokens} tok, {method}): {prompt[:45]!r} -> {reply[:45]!r}"
+    return (f"{tag} OK (reply {reply_tokens} tok, total {n_tokens} tok, "
+            f"{method}): {prompt[:45]!r} -> {reply[:45]!r}")
 
 
 def main():
@@ -246,8 +318,16 @@ def main():
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", ""))
     parser.add_argument("--system", default="")
     parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument("--max-context", type=int, default=4096)
+    parser.add_argument("--max-tokens", type=int, default=1024,
+                        help="API generation cap (raw output incl. reasoning). "
+                             "May exceed --max-reply-tokens to give reasoning "
+                             "models room to think before producing the answer.")
+    parser.add_argument("--max-context", type=int, default=4096,
+                        help="Max tokens for the full record (prompt + reply).")
+    parser.add_argument("--max-reply-tokens", type=int, default=4096,
+                        help="Max tokens allowed in the SAVED assistant reply "
+                             "(after stripping <think> tags). The binding cap "
+                             "on the final saved content.")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--delay", type=float, default=0.0,
                         help="Ignored in concurrent mode (kept for compatibility).")
@@ -255,6 +335,10 @@ def main():
     parser.add_argument("--concurrency", type=int, default=5,
                         help="Number of requests to run in parallel.")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Dump raw SSE lines, reasoning deltas, stream "
+                             "errors, and finish_reason to stderr. Use this "
+                             "to diagnose empty replies from the API.")
     parser.add_argument("--rejects", default="rejects.jsonl")
     args = parser.parse_args()
 
