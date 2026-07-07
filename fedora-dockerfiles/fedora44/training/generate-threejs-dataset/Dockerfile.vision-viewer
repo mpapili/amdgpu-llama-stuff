@@ -1,8 +1,10 @@
 # Vision-validation viewer for the Three.js train.jsonl dataset.
 #
-# Provisions from scratch: Python + Playwright + a headless Chromium with all
-# its OS deps, so viewer.py can screenshot rendered Three.js pages and feed
-# them to a vision-capable llama.cpp endpoint.
+# Built on the official Playwright PYTHON image: Python + the playwright
+# package + Chromium + every OS dep and font it needs are all already
+# installed by Microsoft and version-matched, so there is no
+# `playwright install --with-deps` step to fail on missing font packages. We
+# only add our viewer code.
 #
 # Build (or let run-vision-viewer.sh build it on first run):
 #     podman build -t threejs-vision-viewer -f Dockerfile.vision-viewer .
@@ -10,18 +12,21 @@
 # The dataset directory (train.jsonl, labels.db, validated-html/) is bind-mounted
 # at runtime — nothing is baked in except the viewer code itself.
 
-FROM python:3.12-slim
+# The /python variant ships the matching playwright Python client alongside the
+# browser build — the JS-only `:v1.49.1-noble` tag does NOT.
+FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+
+# Run as root inside the container so writes to the bind-mounted /work volume
+# land as the host user (podman maps container root → invoking user). Chromium
+# needs --no-sandbox under root, which viewer.py already passes.
+USER root
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Playwright + its Chromium browser and all system deps (libnss, libatk,
-# SwiftShader, fonts, ...). `--with-deps` apt-installs everything the bundled
-# Chromium needs to launch headless with WebGL via SwiftShader.
-RUN pip install --no-cache-dir playwright==1.49.1 \
-    && playwright install --with-deps chromium
+# Match the image's browser build exactly.
+RUN pip install --no-cache-dir playwright==1.49.1
 
 WORKDIR /work
 
@@ -32,8 +37,9 @@ COPY viewer.py /app/viewer.py
 EXPOSE 8000
 
 # Defaults; overridden by run-vision-viewer.sh / env vars. The llama.cpp
-# endpoint must be reachable from inside the container — use the LAN IP
-# (192.168.1.1:8080) or run with --network=host for 127.0.0.1.
+# endpoint must be reachable from inside the container — run with the default
+# --network=host (set in the runner) so 127.0.0.1:8080 on the host works, or
+# point at the LAN IP.
 ENV LLAMA_BASE_URL=http://192.168.1.1:8080 \
     LLAMA_MODEL=local-model
 
