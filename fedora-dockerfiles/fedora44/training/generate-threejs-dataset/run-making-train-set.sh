@@ -14,7 +14,7 @@
 #                    is the container itself — use the host's LAN IP).
 #   LLAMA_MODEL      model id passed via --model (default: local-model)
 #   LLAMA_API_KEY    bearer token if the endpoint needs one
-#   CONCURRENCY      --concurrency (default: 1; the vision loop is heavy)
+#   CONCURRENCY      --concurrency (default: 2; the vision loop is heavy)
 #   MAX_TOKENS       --max-tokens generation cap (default: 4096)
 #   MAX_REPLY_TOKENS --max-reply-tokens, binding cap on the SAVED reply (4096)
 #   MAX_CONTEXT      --max-context, full-record cap (default: 4096)
@@ -49,6 +49,7 @@ EXTRA=()
 # and writes validated-html/ back to the host. ':Z' relabels for SELinux hosts.
 exec podman run --rm -it \
   --network=host \
+  --userns=keep-id \
   -v "${HERE}:/work:Z" \
   -e LLAMA_API_KEY="${LLAMA_API_KEY:-${OPENAI_API_KEY:-}}" \
   -e LLAMA_TIMEOUT="${LLAMA_TIMEOUT:-600}" \
@@ -61,7 +62,7 @@ exec podman run --rm -it \
     --base-url "${BASE_URL}" \
     --model "${LLAMA_MODEL:-local-model}" \
     --api-key "${LLAMA_API_KEY:-${OPENAI_API_KEY:-}}" \
-    --concurrency "${CONCURRENCY:-1}" \
+    --concurrency "${CONCURRENCY:-2}" \
     --max-tokens "${MAX_TOKENS:-4096}" \
     --max-reply-tokens "${MAX_REPLY_TOKENS:-4096}" \
     --max-context "${MAX_CONTEXT:-4096}" \
