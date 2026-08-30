@@ -1,0 +1,37 @@
+FROM fedora:44
+
+# tinygrad AM (userspace PCI). Not llama.cpp. Not HIP/KFD.
+# PyPI tinygrad omits tinygrad.llm.kernels (the RDNA3 Qwen path).
+# Install from git onto PYTHONPATH so those kernels import.
+
+RUN dnf install -y \
+      python3 \
+      python3-pip \
+      python3-devel \
+      gcc \
+      gcc-c++ \
+      git \
+      pciutils \
+      wget \
+      hipcc \
+      rocm-hip-devel && \
+    command -v hipcc && \
+    dnf clean all
+
+ENV HOME=/tmp
+ENV DEV=PCI+AMD
+ENV ROCM_PATH=/usr
+ENV HIP_PLATFORM=amd
+
+# The next commit (9599581) misdetects a physical Navi 31 as an SR-IOV VF.
+# Override this when upstream fixes the VF detection.
+ARG TINYGRAD_COMMIT=f196af2327ceed2eeaef0b4d4248d479180a0087
+RUN git init /opt/tinygrad && \
+    git -C /opt/tinygrad remote add origin https://github.com/tinygrad/tinygrad.git && \
+    git -C /opt/tinygrad fetch --depth 1 origin "${TINYGRAD_COMMIT}" && \
+    git -C /opt/tinygrad checkout --detach FETCH_HEAD
+ENV PYTHONPATH=/opt/tinygrad
+
+WORKDIR /opt/tinygrad
+
+CMD ["python3", "-m", "tinygrad.llm", "--help"]

@@ -1,0 +1,125 @@
+FROM fedora:44
+
+# Pin the ROCmFPX source so that a rebuild produces the same binary.
+# This revision was current on 2026-08-30.
+ARG LLAMA_CPP_REF=c49ebdbd5c9f01ec242369f9e7f7967855f80cba
+ARG LLAMA_CPP_REPO=https://github.com/charlie12345/ROCmFPX.git
+
+# Fedora installs ROCm under /usr rather than /opt/rocm.
+RUN dnf install -y \
+      git \
+      cmake \
+      make \
+      gcc \
+      gcc-c++ \
+      nodejs-npm \
+      python3 \
+      python3-flask \
+      wget \
+      rocm-hip-devel \
+      rocblas-devel \
+      hipblas-devel \
+      rocminfo \
+      rocm-smi && \
+    dnf clean all
+
+ENV ROCM_PATH=/usr
+ENV HIP_PLATFORM=amd
+
+# The container runs with an arbitrary host UID that has no home directory.
+ENV HOME=/tmp
+
+# Fetch an exact fork revision while allowing LLAMA_CPP_REF to be overridden
+# with a branch, tag, or commit at build time.
+RUN git init /llama.cpp && \
+    cd /llama.cpp && \
+    git remote add origin "${LLAMA_CPP_REPO}" && \
+    git fetch --depth 1 origin "${LLAMA_CPP_REF}" && \
+    git checkout --detach FETCH_HEAD && \
+    git rev-parse HEAD
+
+WORKDIR /llama.cpp
+
+# ROCm 7.1 can report zero occupancy on some RDNA2 GPUs despite a successful
+# query. Patch only the expected source fragment and fail if the fork changes.
+RUN python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/llama.cpp/ggml/src/ggml-cuda/fattn-common.cuh")
+source = path.read_text()
+
+old = r'''    GGML_ASSERT(max_blocks_per_sm > 0);
+    int parallel_blocks = max_blocks_per_sm;
+'''
+
+new = r'''    // ROCm 7.1 on some RDNA2 GPUs can return success from the
+    // occupancy query while incorrectly reporting zero active blocks.
+    // Upstream aborts at GGML_ASSERT(max_blocks_per_sm > 0).
+    // 2 is a conservative occupancy for gfx1030/gfx1100 FA kernels.
+    if (max_blocks_per_sm <= 0) {
+        GGML_LOG_WARN(
+            "%s: HIP occupancy query returned %d; "
+            "forcing max_blocks_per_sm=2 (ROCm 7.1/RDNA2 workaround)\n",
+            __func__,
+            max_blocks_per_sm);
+        max_blocks_per_sm = 2;
+    }
+    int parallel_blocks = max_blocks_per_sm;
+'''
+
+matches = source.count(old)
+if matches != 1:
+    raise SystemExit(
+        f"Expected exactly one occupancy assertion in {path}; found {matches}. "
+        "The fork changed and the patch must be reviewed."
+    )
+
+path.write_text(source.replace(old, new))
+print(f"Applied RDNA2 occupancy workaround to {path}")
+PY
+
+RUN grep -n -A12 -B4 \
+      'ROCm 7.1 on some RDNA2' \
+      /llama.cpp/ggml/src/ggml-cuda/fattn-common.cuh
+
+RUN hipconfig --full && \
+    rpm -q \
+      rocm-hip-devel \
+      rocblas-devel \
+      hipblas-devel
+
+# Build a fat HIP binary for the W6800 (gfx1030) and RX 7900 XTX (gfx1100).
+# Keep Flash Attention available at runtime, including mixed KV cache types,
+# and disable HIP graphs because graphs plus no-VMM can page-fault at depth.
+RUN HIPCXX="$(hipconfig -l)/clang" \
+    HIP_PATH="$(hipconfig -R)" \
+    cmake -S . -B build \
+      -DGGML_HIP=ON \
+      -DAMDGPU_TARGETS="gfx1030;gfx1100" \
+      -DGPU_TARGETS="gfx1030;gfx1100" \
+      -DCMAKE_HIP_ARCHITECTURES="gfx1030;gfx1100" \
+      -DGGML_HIP_NO_VMM=ON \
+      -DGGML_CUDA_FA=ON \
+      -DGGML_CUDA_FA_ALL_QUANTS=ON \
+      -DGGML_HIP_GRAPHS=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF && \
+    cmake --build build \
+      --config Release \
+      --target llama-server llama-cli llama-bench \
+      -j"$(nproc)"
+
+# Stage the executables and discard build-only data.
+RUN cp \
+      /llama.cpp/build/bin/llama-server \
+      /llama.cpp/build/bin/llama-cli \
+      /llama.cpp/build/bin/llama-bench \
+      /llama.cpp/ && \
+    rm -rf \
+      /llama.cpp/build \
+      /llama.cpp/.git
+
+WORKDIR /llama.cpp
+
+EXPOSE 8080
