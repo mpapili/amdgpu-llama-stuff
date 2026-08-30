@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Barn Owl — Three.js</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #0a0a12; font-family: system-ui, sans-serif; }
+canvas { display: block; }
+#info {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  color: #ccc; font-size: 14px; pointer-events: none; text-align: center;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+}
+#info h1 { font-size: 20px; font-weight: 600; color: #e8dcc8; margin-bottom: 2px; }
+#controls {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px;
+}
+#controls button {
+  background: rgba(255,255,255,.1); color: #e8dcc8; border: 1px solid rgba(255,255,255,.2);
+  padding: 8px 18px; border-radius: 20px; cursor: pointer; font-size: 13px;
+  backdrop-filter: blur(6px); transition: background .2s;
+}
+#controls button:hover { background: rgba(255,255,255,.22); }
+</style>
+</head>
+<body>
+
+<div id="info">
+  <h1>🦉 Barn Owl</h1>
+  <span>Drag to orbit · Scroll to zoom</span>
+</div>
+<div id="controls">
+  <button id="btnHoot">🔊 Hoot</button>
+  <button id="btnBlink">👁 Blink</button>
+  <button id="btnFeathers">🪶 Fluff</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ── Scene Setup ─────────────────────────────────────────── */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a12);
+scene.fog = new THREE.FogExp2(0x0a0a12, 0.025);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 2, 10);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.5, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 4;
+controls.maxDistance = 25;
+controls.maxPolarAngle = Math.PI * 0.85;
+controls.update();
+
+/* ── Lighting ────────────────────────────────────────────── */
+const ambientLight = new THREE.AmbientLight(0x303050, 0.6);
+scene.add(ambientLight);
+
+const moonLight = new THREE.DirectionalLight(0xc8d0e8, 1.8);
+moonLight.position.set(-5, 12, 8);
+moonLight.castShadow = true;
+moonLight.shadow.mapSize.set(2048, 2048);
+moonLight.shadow.camera.near = 1;
+moonLight.shadow.camera.far = 30;
+moonLight.shadow.camera.left = -8;
+moonLight.shadow.camera.right = 8;
+moonLight.shadow.camera.top = 8;
+moonLight.shadow.camera.bottom = -8;
+moonLight.shadow.bias = -0.001;
+scene.add(moonLight);
+
+const rimLight = new THREE.DirectionalLight(0xffa060, 0.5);
+rimLight.position.set(6, 4, -3);
+scene.add(rimLight);
+
+const spotLight = new THREE.SpotLight(0xffeedd, 1.2, 20, Math.PI / 6, 0.6, 1);
+spotLight.position.set(0, 8, 6);
+spotLight.castShadow = true;
+scene.add(spotLight);
+
+/* ── Materials ───────────────────────────────────────────── */
+const matBody = new THREE.MeshStandardMaterial({
+  color: 0x8b7355, roughness: 0.85, metalness: 0.0,
+});
+const matBelly = new THREE.MeshStandardMaterial({
+  color: 0xf0e6d2, roughness: 0.9, metalness: 0.0,
+});
+const matFace = new THREE.MeshStandardMaterial({
+  color: 0xfff8ee, roughness: 0.7, metalness: 0.0,
+});
+const matDark = new THREE.MeshStandardMaterial({
+  color: 0x2a1f14, roughness: 0.8, metalness: 0.0,
+});
+const matEye = new THREE.MeshStandardMaterial({
+  color: 0x0a0804, roughness: 0.3, metalness: 0.1,
+});
+const matEyeHighlight = new THREE.MeshStandardMaterial({
+  color: 0xffffff, roughness: 0.1, metalness: 0.0, emissive: 0xffffff, emissiveIntensity: 0.5,
+});
+const matBeak = new THREE.MeshStandardMaterial({
+  color: 0x1a1a1a, roughness: 0.4, metalness: 0.1,
+});
+const matWing = new THREE.MeshStandardMaterial({
+  color: 0x9e8b6e, roughness: 0.8, metalness: 0.0,
+});
+const matTail = new THREE.MeshStandardMaterial({
+  color: 0xb8a488, roughness: 0.85, metalness: 0.0,
+});
+const matFeet = new THREE.MeshStandardMaterial({
+  color: 0x3a3020, roughness: 0.7, metalness: 0.05,
+});
+const matBranch = new THREE.MeshStandardMaterial({
+  color: 0x3d2b1a, roughness: 0.95, metalness: 0.0,
+});
+
+/* ── Helper: create ellipsoid ────────────────────────────── */
+function ellipsoid(rx, ry, rz, mat) {
+  const g = new THREE.SphereGeometry(1, 32, 24);
+  const m = new THREE.Mesh(g, mat);
+  m.scale.set(rx, ry, rz);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+/* ── Owl Group ───────────────────────────────────────────── */
+const owl = new THREE.Group();
+scene.add(owl);
+
+/* ── Body ────────────────────────────────────────────────── */
+const body = ellipsoid(1.0, 1.2, 0.85, matBody);
+body.position.set(0, 1.2, 0);
+owl.add(body);
+
+/* ── Belly ───────────────────────────────────────────────── */
+const belly = ellipsoid(0.72, 0.95, 0.55, matBelly);
+belly.position.set(0, 1.15, 0.35);
+owl.add(belly);
+
+/* ── Belly feather details (subtle scalloped lines) ──────── */
+for (let i = 0; i < 7; i++) {
+  const ringGeo = new THREE.TorusGeometry(0.55 - i * 0.04, 0.012, 8, 32);
+  const ring = new THREE.Mesh(ringGeo, matBody);
+  ring.position.set(0, 0.55 + i * 0.18, 0.62);
+  ring.rotation.x = Math.PI / 2;
+  owl.add(ring);
+}
+
+/* ── Head ────────────────────────────────────────────────── */
+const head = ellipsoid(0.95, 0.85, 0.8, matBody);
+head.position.set(0, 2.75, 0);
+owl.add(head);
+
+/* ── Heart-shaped face mask ──────────────────────────────── */
+function createHeartShape() {
+  const shape = new THREE.Shape();
+  const s = 0.72;
+  shape.moveTo(0, -0.35 * s);
+  shape.bezierCurveTo(0, -0.15 * s, -0.9 * s, 0.15 * s, -0.9 * s, 0.45 * s);
+  shape.bezierCurveTo(-0.9 * s, 0.75 * s, -0.45 * s, 1.05 * s, 0, 1.15 * s);
+  shape.bezierCurveTo(0.45 * s, 1.05 * s, 0.9 * s, 0.75 * s, 0.9 * s, 0.45 * s);
+  shape.bezierCurveTo(0.9 * s, 0.15 * s, 0, -0.15 * s, 0, -0.35 * s);
+  return shape;
+}
+
+const heartShape = createHeartShape();
+const heartGeo = new THREE.ShapeGeometry(heartShape, 48);
+const faceMask = new THREE.Mesh(heartGeo, matFace);
+faceMask.position.set(0, 2.78, 0.7);
+owl.add(faceMask);
+
+// Slightly recessed face disc behind the heart
+const faceDisc = ellipsoid(0.7, 0.65, 0.15, matFace);
+faceDisc.position.set(0, 2.78, 0.68);
+owl.add(faceDisc);
+
+/* ── Eyes ────────────────────────────────────────────────── */
+const eyeGroup = new THREE.Group();
+owl.add(eyeGroup);
+
+function createEye(x) {
+  const group = new THREE.Group();
+
+  // Eye socket (dark)
+  const socket = ellipsoid(0.22, 0.28, 0.2, matDark);
+  socket.position.set(x, 2.85, 0.82);
+  group.add(socket);
+
+  // Pupil
+  const pupil = ellipsoid(0.16, 0.2, 0.18, matEye);
+  pupil.position.set(x, 2.85, 0.88);
+  group.add(pupil);
+
+  // Highlight
+  const hl = ellipsoid(0.04, 0.05, 0.04, matEyeHighlight);
+  hl.position.set(x + 0.05, 2.92, 0.94);
+  group.add(hl);
+
+  // Secondary highlight
+  const hl2 = ellipsoid(0.025, 0.025, 0.025, matEyeHighlight);
+  hl2.position.set(x - 0.06, 2.78, 0.93);
+  group.add(hl2);
+
+  return group;
+}
+
+const leftEye = createEye(-0.32);
+const rightEye = createEye(0.32);
+eyeGroup.add(leftEye, rightEye);
+
+/* ── Beak ────────────────────────────────────────────────── */
+const beakGeo = new THREE.ConeGeometry(0.06, 0.22, 8);
+const beak = new THREE.Mesh(beakGeo, matBeak);
+beak.position.set(0, 2.48, 0.92);
+beak.rotation.x = Math.PI * 0.35;
+beak.castShadow = true;
+owl.add(beak);
+
+/* ── Wings ───────────────────────────────────────────────── */
+function createWing(side) {
+  const group = new THREE.Group();
+  const s = side === 'left' ? -1 : 1;
+
+  // Main wing body
+  const wingShape = new THREE.Shape();
+  wingShape.moveTo(0, 0);
+  wingShape.bezierCurveTo(s * 0.3, -0.2, s * 1.4, -0.6, s * 1.8, -1.6);
+  wingShape.bezierCurveTo(s * 1.9, -1.8, s * 1.5, -2.0, s * 1.2, -1.8);
+  wingShape.bezierCurveTo(s * 0.8, -1.4, s * 0.3, -0.8, 0, -0.3);
+
+  const extrudeSettings = { depth: 0.08, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.04, bevelSegments: 4 };
+  const wingGeo = new THREE.ExtrudeGeometry(wingShape, extrudeSettings);
+  const wing = new THREE.Mesh(wingGeo, matWing);
+  wing.position.set(s * 0.6, 2.0, -0.1);
+  wing.rotation.z = s * 0.15;
+  wing.castShadow = true;
+  group.add(wing);
+
+  // Primary feathers (finger-like tips)
+  for (let i = 0; i < 5; i++) {
+    const featherGeo = new THREE.CylinderGeometry(0.02, 0.06, 0.5 + Math.random() * 0.3, 6);
+    const feather = new THREE.Mesh(featherGeo, matWing);
+    const angle = s * (0.3 + i * 0.15);
+    feather.position.set(s * (1.0 + i * 0.15), 0.5 - i * 0.25, 0);
+    feather.rotation.z = angle;
+    feather.castShadow = true;
+    group.add(feather);
+  }
+
+  return group;
+}
+
+const leftWing = createWing('left');
+const rightWing = createWing('right');
+owl.add(leftWing, rightWing);
+
+/* ── Tail ────────────────────────────────────────────────── */
+const tailGroup = new THREE.Group();
+owl.add(tailGroup);
+
+const tailShape = new THREE.Shape();
+tailShape.moveTo(-0.35, 0);
+tailShape.lineTo(-0.25, -1.8);
+tailShape.lineTo(

@@ -1,8 +1,14 @@
 FROM fedora:44
 
+# ──────────────────────────────────────────────
+# unslothai llama.cpp fork build:
+#   qwen4exp/qwen3.8-flash-next
+#
 # Pin the source so that a rebuild produces the same binary.
-# This revision was current on 2026-08-10.
-ARG LLAMA_CPP_REF=dd1ea524333b1e697489067d7a4c39c60d32beee
+# This revision was current on 2026-08-27.
+# ──────────────────────────────────────────────
+ARG LLAMA_CPP_REF=ef9fa1ba1f0d3f11ed7ddc1da94e5db4c22ae7b6
+ARG LLAMA_CPP_REPO=https://github.com/unslothai/llama.cpp.git
 
 # ──────────────────────────────────────────────
 # 1. Base build dependencies + ROCm HIP stack
@@ -34,14 +40,14 @@ ENV HIP_PLATFORM=amd
 ENV HOME=/tmp
 
 # ──────────────────────────────────────────────
-# 2. Fetch a reproducible llama.cpp revision
+# 2. Fetch a reproducible llama.cpp fork revision
 #
 # Using git fetch rather than "git clone --depth 1" allows LLAMA_CPP_REF
 # to be either a branch, tag, or exact commit.
 # ──────────────────────────────────────────────
 RUN git init /llama.cpp && \
     cd /llama.cpp && \
-    git remote add origin https://github.com/ggml-org/llama.cpp.git && \
+    git remote add origin "${LLAMA_CPP_REPO}" && \
     git fetch --depth 1 origin "${LLAMA_CPP_REF}" && \
     git checkout --detach FETCH_HEAD && \
     git rev-parse HEAD
@@ -152,8 +158,7 @@ RUN hipconfig --full && \
 #
 # Runtime (not baked in):
 #   Prefer -ctk f16 -ctv f16 over bf16 on AMD; bf16 KV has shown a
-#   large daily TG drop vs f16. If model + context fit in VRAM,
-#   -fa off often wins TG even with WMMA. Re-test at large -c.
+#   large daily TG drop vs f16.
 #
 # BUILD_SHARED_LIBS=OFF:
 #   Keep the staged llama binaries independent of llama.cpp's own
@@ -169,7 +174,7 @@ RUN HIPCXX="$(hipconfig -l)/clang" \
       -DCMAKE_HIP_ARCHITECTURES="gfx1030;gfx1100" \
       -DGGML_HIP_NO_VMM=ON \
       -DGGML_CUDA_FA=ON \
-      -DGGML_CUDA_FA_ALL_QUANTS=ON \
+      -DGGML_CUDA_FA_ALL_QUANT=ON \
       -DGGML_HIP_GRAPHS=OFF \
       -DBUILD_SHARED_LIBS=OFF \
       -DCMAKE_BUILD_TYPE=Release \

@@ -1,0 +1,24 @@
+FROM vllm/vllm-openai-rocm:latest 
+
+# Use the ROCm PyTorch wheel index as an additional source while retaining
+# PyPI for packages such as Transformers and bitsandbytes.
+ARG ROCM_PYTORCH_INDEX_URL=https://download.pytorch.org/whl/rocm6.4
+RUN python -m pip install --no-cache-dir --upgrade \
+    --extra-index-url "${ROCM_PYTORCH_INDEX_URL}" \
+    transformers \
+    bitsandbytes \
+    vllm-gguf-plugin
+
+# Both the Radeon Pro W6800 (gfx1030) and Radeon RX 7900 XTX (gfx1100)
+# are exposed by the run script. Do not set HSA_OVERRIDE_GFX_VERSION here:
+# one override cannot correctly describe both GPU architectures.
+ENV VLLM_HOST_IP=0.0.0.0 \
+    VLLM_PORT=8081 \
+    VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+WORKDIR /app
+
+EXPOSE 8081
+
+ENTRYPOINT ["vllm"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8081"]

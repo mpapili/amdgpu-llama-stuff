@@ -51,9 +51,10 @@ ENV PKG_CONFIG_PATH="${VULKAN_SDK}/lib/pkgconfig"
 # ──────────────────────────────────────────────
 # 3. Clone and build llama.cpp with Vulkan backend
 # ──────────────────────────────────────────────
-ARG LLAMA_CPP_REPO=https://github.com/ggml-org/llama.cpp.git
-ARG LLAMA_CPP_BRANCH=master
-# FlashAttention KV cache quantization: llama.cpp defaults to only f16/q4_0/q8_0/bf16 unless enabled
+ARG LLAMA_CPP_REPO=https://github.com/z-lab/llama.cpp-fork.git
+ARG LLAMA_CPP_BRANCH=dflash2
+# Retained for compatibility with llama.cpp builds that provide CUDA FA variants.
+# The dflash2 Vulkan backend generates its supported KV-cache variants automatically.
 ARG GGML_CUDA_FA_ALL_QUANTS=ON
 ARG CMAKE_EXTRA_FLAGS=""
 
