@@ -13,6 +13,7 @@ sudo tuned-adm profile accelerator-performance
 
 mkdir -p "$HOME/.cache/llama-vulkan"
 
+# Critical: Vulkan always requires disabling host-visible VRAM.
 podman run --rm \
     --name llama-vulkan \
     --device=/dev/dri/renderD128 \
@@ -26,6 +27,7 @@ podman run --rm \
     -e XDG_CACHE_HOME=/cache \
     -e MESA_SHADER_CACHE_DIR=/cache \
     -e GGML_VK_VISIBLE_DEVICES=0,1 \
+    -e GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 \
     -v "$HOME/.cache/llama-vulkan:/cache:Z" \
     -v /home/mike/Downloads/LLMs:/models:Z \
     -p 0.0.0.0:8080:8080 \

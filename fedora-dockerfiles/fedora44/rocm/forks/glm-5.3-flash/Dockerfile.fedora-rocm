@@ -1,0 +1,205 @@
+FROM fedora:44
+
+# ──────────────────────────────────────────────
+# unslothai llama.cpp fork build:
+#   glm5next/upstream  (GLM-5-Next / GLM-5.3-Flash)
+#   https://github.com/ggml-org/llama.cpp/pull/27754
+#
+# Pin the source so that a rebuild produces the same binary.
+# This is the head of branch glm5next/upstream as of 2026-09-02.
+# Pass the branch name instead to track it:
+#   --build-arg LLAMA_CPP_REF=glm5next/upstream
+# ──────────────────────────────────────────────
+ARG LLAMA_CPP_REF=949f7efb097eb20ef36fecdb1afaebff9a4ae7ed
+ARG LLAMA_CPP_REPO=https://github.com/unslothai/llama.cpp.git
+
+# ──────────────────────────────────────────────
+# 1. Base build dependencies + ROCm HIP stack
+#
+# Fedora installs ROCm under /usr rather than /opt/rocm.
+# Fedora 44 currently supplies ROCm/HIP 7.1.1, which has been
+# associated with a broken occupancy result on some RDNA2 GPUs.
+# ──────────────────────────────────────────────
+RUN dnf install -y \
+      git \
+      cmake \
+      make \
+      gcc \
+      gcc-c++ \
+      python3 \
+      python3-flask \
+      wget \
+      rocm-hip-devel \
+      rocblas-devel \
+      hipblas-devel \
+      rocminfo \
+      rocm-smi && \
+    dnf clean all
+
+ENV ROCM_PATH=/usr
+ENV HIP_PLATFORM=amd
+
+# Container is run with an arbitrary host UID that has no home directory.
+ENV HOME=/tmp
+
+# ──────────────────────────────────────────────
+# 2. Fetch a reproducible llama.cpp fork revision
+#
+# Using git fetch rather than "git clone --depth 1" allows LLAMA_CPP_REF
+# to be either a branch, tag, or exact commit.
+# ──────────────────────────────────────────────
+RUN git init /llama.cpp && \
+    cd /llama.cpp && \
+    git remote add origin "${LLAMA_CPP_REPO}" && \
+    git fetch --depth 1 origin "${LLAMA_CPP_REF}" && \
+    git checkout --detach FETCH_HEAD && \
+    git rev-parse HEAD
+
+WORKDIR /llama.cpp
+
+# ──────────────────────────────────────────────
+# 3. ROCm 7.1 / RDNA2 Flash Attention workaround
+#
+# On affected ROCm 7.1 systems:
+#
+#   cudaOccupancyMaxActiveBlocksPerMultiprocessor(...)
+#
+# succeeds but incorrectly stores zero in max_blocks_per_sm.
+# Upstream then aborts at:
+#
+#   GGML_ASSERT(max_blocks_per_sm > 0);
+#
+# Force a conservative occupancy of one in that specific situation.
+# The Python patch verifies that exactly one expected source fragment
+# was changed; otherwise the image build fails instead of silently
+# producing an unpatched binary.
+# ──────────────────────────────────────────────
+RUN python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/llama.cpp/ggml/src/ggml-cuda/fattn-common.cuh")
+source = path.read_text()
+
+old = r'''    GGML_ASSERT(max_blocks_per_sm > 0);
+    int parallel_blocks = max_blocks_per_sm;
+'''
+
+new = r'''    // ROCm 7.1 on some RDNA2 GPUs can return success from the
+    // occupancy query while incorrectly reporting zero active blocks.
+    // Upstream aborts at GGML_ASSERT(max_blocks_per_sm > 0).
+    // 1 is maximally conservative but leaves ~25-35% FA perf on
+    // the floor (observed 30% vs Vulkan). 2-4 is the real occupancy
+    // on gfx1030/gfx1100 for these FA kernels; use 2 as safe default.
+    if (max_blocks_per_sm <= 0) {
+        GGML_LOG_WARN(
+            "%s: HIP occupancy query returned %d; "
+            "forcing max_blocks_per_sm=2 "
+            "(ROCm 7.1/RDNA2 workaround, was 1)\n",
+            __func__,
+            max_blocks_per_sm);
+        max_blocks_per_sm = 2;
+    }
+    int parallel_blocks = max_blocks_per_sm;
+'''
+
+matches = source.count(old)
+
+if matches != 1:
+    raise SystemExit(
+        f"Expected exactly one occupancy assertion in {path}; "
+        f"found {matches}. Upstream source changed, so the patch "
+        f"must be reviewed."
+    )
+
+path.write_text(source.replace(old, new))
+
+print(f"Applied RDNA2 occupancy workaround to {path}")
+PY
+
+# Verify the resulting source visibly during the container build.
+RUN grep -n -A14 -B4 \
+      'ROCm 7.1 on some RDNA2' \
+      /llama.cpp/ggml/src/ggml-cuda/fattn-common.cuh
+
+# Record the ROCm/HIP compiler versions in the build output.
+RUN hipconfig --full && \
+    rpm -q \
+      rocm-hip-devel \
+      rocblas-devel \
+      hipblas-devel
+
+# ──────────────────────────────────────────────
+# 4. Build with HIP/ROCm
+#
+# User has mixed RDNA2 + RDNA3:
+#   W6800       = gfx1030 (RDNA2, navi21)
+#   RX 7900 XTX = gfx1100 (RDNA3, navi31)
+#
+# Previous Dockerfile built only gfx1030, so initializing
+# the 7900 XTX would segfault due to missing kernels.
+# Fix: build fat binary for both.
+#
+# GGML_HIP_NO_VMM=ON:
+#   HIP VMM is broken on ROCm 7+ (tracked upstream in llama.cpp back
+#   to ROCm). This is also llama.cpp's default. ROCm 6.4.4 can enable
+#   VMM; on 7.x it is not worth it — 7.2 is slightly quicker without.
+#
+# Native WMMA:
+#   GGML_HIP_ROCWMMA_FATTN is gone. Native WMMA FA is compiled in
+#   automatically for RDNA3/RDNA4 (gfx1100). Gfx1030 has no WMMA and
+#   will not dispatch those kernels.
+#
+# GGML_CUDA_FA=ON + GGML_CUDA_FA_ALL_QUANTS=ON:
+#   Keep FA kernels in the binary so -fa can be toggled at runtime.
+#   Default FA vec instances are only same-type pairs
+#   (f16-f16, bf16-bf16, q8_0-q8_0, q4_0-q4_0). Mixed KV cache
+#   (e.g. -ctk q8_0 -ctv f16) needs ALL_QUANTS or FA silently
+#   degrades / is unavailable for that combo.
+#
+# GGML_HIP_GRAPHS=OFF:
+#   Graphs + no-VMM have a known page-fault at depth. Off is safer.
+#
+# Runtime (not baked in):
+#   Prefer -ctk f16 -ctv f16 over bf16 on AMD; bf16 KV has shown a
+#   large daily TG drop vs f16. If model + context fit in VRAM,
+#   -fa off often wins TG even with WMMA. Re-test at large -c.
+#
+# BUILD_SHARED_LIBS=OFF:
+#   Keep the staged llama binaries independent of llama.cpp's own
+#   libllama.so/libggml*.so shared libraries. ROCm system libraries
+#   remain dynamically linked and are retained in the image.
+# ──────────────────────────────────────────────
+RUN HIPCXX="$(hipconfig -l)/clang" \
+    HIP_PATH="$(hipconfig -R)" \
+    cmake -S . -B build \
+      -DGGML_HIP=ON \
+      -DAMDGPU_TARGETS="gfx1030;gfx1100" \
+      -DGPU_TARGETS="gfx1030;gfx1100" \
+      -DCMAKE_HIP_ARCHITECTURES="gfx1030;gfx1100" \
+      -DGGML_HIP_NO_VMM=ON \
+      -DGGML_CUDA_FA=ON \
+      -DGGML_CUDA_FA_ALL_QUANTS=ON \
+      -DGGML_HIP_GRAPHS=OFF \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF && \
+    cmake --build build \
+      --config Release \
+      --target llama-server llama-cli llama-bench \
+      -j"$(nproc)"
+
+# ──────────────────────────────────────────────
+# 4. Stage binaries and remove the build tree
+# ──────────────────────────────────────────────
+RUN cp \
+      /llama.cpp/build/bin/llama-server \
+      /llama.cpp/build/bin/llama-cli \
+      /llama.cpp/build/bin/llama-bench \
+      /llama.cpp/ && \
+    rm -rf \
+      /llama.cpp/build \
+      /llama.cpp/.git
+
+WORKDIR /llama.cpp
+
+EXPOSE 8080

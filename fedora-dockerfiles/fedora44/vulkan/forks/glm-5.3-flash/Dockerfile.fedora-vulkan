@@ -50,24 +50,17 @@ ENV PKG_CONFIG_PATH="${VULKAN_SDK}/lib/pkgconfig"
 
 # ──────────────────────────────────────────────
 # 3. Clone and build llama.cpp with Vulkan backend
+#    GLM-5.3-Flash (glm5next) support from PR ggml-org/llama.cpp#27754
 # ──────────────────────────────────────────────
-ARG LLAMA_CPP_REPO=https://github.com/ggml-org/llama.cpp.git
-ARG LLAMA_CPP_BRANCH=master
-# rdna3 regression
-# When PINNED_COMMIT is non-empty, check out this last-known-good commit instead
-# of the tip of the branch. TEMPORARY: remove once the RDNA3 regression is fixed.
-ARG PINNED_COMMIT=""
+ARG LLAMA_CPP_REPO=https://github.com/unslothai/llama.cpp.git
+ARG LLAMA_CPP_BRANCH=glm5next/upstream
 # FlashAttention KV cache quantization: llama.cpp defaults to only f16/q4_0/q8_0/bf16 unless enabled
 ARG GGML_CUDA_FA_ALL_QUANTS=ON
 ARG CMAKE_EXTRA_FLAGS=""
 
 RUN git clone ${LLAMA_CPP_REPO} /llama.cpp && \
     cd /llama.cpp && \
-    git checkout ${LLAMA_CPP_BRANCH} && \
-    if [ -n "${PINNED_COMMIT}" ]; then \
-      echo "rdna3 regression: building OLDER pinned last-known-good commit ${PINNED_COMMIT}"; \
-      git checkout ${PINNED_COMMIT}; \
-    fi
+    git checkout ${LLAMA_CPP_BRANCH}
 
 WORKDIR /llama.cpp
 RUN mkdir build

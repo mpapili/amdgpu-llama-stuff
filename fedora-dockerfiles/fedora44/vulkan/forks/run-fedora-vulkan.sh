@@ -3,6 +3,7 @@
 echo "sudo just for ulimit -l"
 sudo ulimit -l unlimited
 
+# Critical: Vulkan always requires disabling host-visible VRAM.
 podman run --rm \
     --name llama-vulkan \
     --device=/dev/kfd \
@@ -17,6 +18,7 @@ podman run --rm \
     --user $(id -u):$(id -g) \
     --ulimit memlock=-1:-1 \
     --security-opt no-new-privileges \
+    -e GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 \
     -p 0.0.0.0:8080:8080 \
     -it localhost/llama-cpp-fedora-vulkan-testing-branch \
     /bin/bash
