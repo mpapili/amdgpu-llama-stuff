@@ -11,6 +11,7 @@ if ! ulimit -l unlimited 2>/dev/null; then
     echo "then log out and back in."
 fi
 
+# Critical: ROCm always requires disabling host-visible VRAM.
 podman run --rm \
     --name llama-rocmfpx \
     --device=/dev/kfd \
@@ -27,6 +28,7 @@ podman run --rm \
     -v /home/mike/Downloads/LLMs:/models:ro \
     -e HOME=/tmp \
     -e HSA_ENABLE_SDMA=0 \
+    -e GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 \
     -p 0.0.0.0:8080:8080 \
     -it localhost/llama-cpp-rocmfpx-fedora-rocm \
     /bin/bash

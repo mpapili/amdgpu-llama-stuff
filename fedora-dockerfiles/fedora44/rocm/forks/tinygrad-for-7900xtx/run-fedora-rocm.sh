@@ -180,6 +180,7 @@ unbind_xtx
 
 # --network host: container 0.0.0.0:${PORT} is the host. Do not exec; the trap
 # preserves AM ownership by default or restores amdgpu with RESTORE_XTX=1.
+# Critical: ROCm always requires disabling host-visible VRAM.
 sudo podman run --rm -it \
     --name tiny-am \
     --privileged \
@@ -191,6 +192,7 @@ sudo podman run --rm -it \
     -e DEBUG=2 \
     -e JITBEAM=2 \
     -e HOME=/root \
+    -e GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 \
     -v "${CACHE_DIR}:/root/.cache/tinygrad:Z" \
     -v "${MODELS_DIR}:/models:Z" \
     "${IMAGE}" \

@@ -34,6 +34,7 @@ fi
 #
 # This script exports your full multi-GPU command correctly:
 # ──────────────────────────────────────────────
+# Critical: ROCm always requires disabling host-visible VRAM.
 podman run --rm \
     --name llama-rocm \
     --device=/dev/kfd \
@@ -50,6 +51,7 @@ podman run --rm \
     -v /home/mike/Downloads/LLMs:/models:ro \
     -e HOME=/tmp \
     -e HSA_ENABLE_SDMA=0 \
+    -e GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 \
     -p 0.0.0.0:8080:8080 \
     -it localhost/llama-cpp-fedora-rocm \
     /bin/bash
